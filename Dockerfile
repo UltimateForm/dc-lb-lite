@@ -14,9 +14,6 @@ COPY ./parsers/* ./parsers
 
 COPY ./models/* ./models
 
-COPY ./killstreaks/* ./killstreaks
-
 COPY ./main.py ./
-
 
 CMD ["pipenv", "run", "python", "main.py"]
