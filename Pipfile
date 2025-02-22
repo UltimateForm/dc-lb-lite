@@ -1,0 +1,28 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+py-cord = "*"
+asyncio = "*"
+python-dotenv = "*"
+aiofiles = "*"
+reactivex = "*"
+table2ascii = "*"
+dacite = "*"
+numpy = "*"
+
+[dev-packages]
+flake8 = "*"
+flake8-async = "*"
+pytest = "*"
+faker = "*"
+pyright = "*"
+
+[scripts]
+lint = "flake8"
+typecheck = "pyright"
+
+[requires]
+python_version = "3.11"

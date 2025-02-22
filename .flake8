@@ -1,0 +1,4 @@
+[flake8]
+max_line_length = 200
+extend_ignore = ASYNC300,ASYNC102
+exclude = .pyright_stubs
