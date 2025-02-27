@@ -6,7 +6,12 @@ import math
 import asyncio
 from table2ascii import table2ascii as t2a
 from models.players import LeaderBoard, Player, GameMatch
-from parsers.main import compute_next_gate_text, compute_gate_text, make_ordinal
+from parsers.main import (
+    compute_next_gate_text,
+    compute_gate_text,
+    make_ordinal,
+    sizeof_fmt,
+)
 from aiofiles import open as aopen, os as aos
 
 load_dotenv()
@@ -41,37 +46,46 @@ def rank_2_emoji(n: int):
 class Leaderboard(commands.Cog):
     bot: discord.Bot
     channel: discord.abc.Messageable | None = None
-    _message: discord.Message | None = None
+    _messages: list[discord.Message]
     _file_path = "./persist/leaderboard_msg_id"
 
     def __init__(self, bot: discord.Bot):
         self.bot = bot
         self._last_member = None
+        self._messages = []
 
     def cog_unload(self):
         return super().cog_unload()
 
-    async def write_msg_id(self):
-        if self._message is None:
+    async def write_msg_ids(self):
+        if self._messages is None:
             return
         async with aopen(self._file_path, "w") as file:
-            await file.write(str(self._message.id))
+            await file.write("\n".join([str(msg.id) for msg in self._messages]))
 
-    async def delete_previous_message(self) -> str | None:
+    async def delete_msg(self, msg_id: str):
+        try:
+            if not msg_id.isdecimal() or not self.channel:
+                return
+            parsed_msg_id = int(msg_id)
+            msg = await self.channel.fetch_message(parsed_msg_id)
+            await msg.delete()
+        except Exception as e:
+            print(f"Failed to delete previous msg {msg_id}. {e}")
+
+    async def delete_previous_messages(self) -> str | None:
         if self.channel is None:
             return
         try:
             file_exists = await aos.path.exists(self._file_path)
             if not file_exists:
                 return
-            msg_id: str | None = ""
+            msg_ids: list[str] = []
             async with aopen(self._file_path, "r") as file:
-                msg_id = await file.read()
-            if not msg_id.isdecimal():
-                return
-            parsed_msg_id = int(msg_id)
-            msg = await self.channel.fetch_message(parsed_msg_id)
-            await msg.delete()
+                msg_ids = await file.readlines()
+
+            tasks = [self.delete_msg(id.strip()) for id in msg_ids]
+            await asyncio.gather(*tasks)
         except Exception as e:
             print(e)
 
@@ -81,7 +95,7 @@ class Leaderboard(commands.Cog):
         channel = await self.bot.fetch_channel(CHANNEL_ID)
         if isinstance(channel, discord.abc.Messageable):
             self.channel = channel
-            await self.delete_previous_message()
+            await self.delete_previous_messages()
             asyncio.create_task(self.send_board())
 
     def get_row(self, player_data: Player, config: LeaderBoard):
@@ -99,43 +113,91 @@ class Leaderboard(commands.Cog):
             deaths,
         ]
 
-    async def send_board(self, existing_leaderboard: LeaderBoard | None = None):
+    async def send_board(
+        self, existing_leaderboard: LeaderBoard | None = None, force_rewrite=False
+    ):
         if not self.channel:
             return
+        if force_rewrite:
+            self._messages = []
         leaderboard_data = existing_leaderboard
         if not leaderboard_data:
             leaderboard_data = await LeaderBoard.aload()
-        board_data = sorted(
-            [
-                self.get_row(value, leaderboard_data)
-                for value in leaderboard_data.players
+        top_players = sorted(
+            leaderboard_data.players, key=lambda x: x.total_score, reverse=True
+        )
+        board_data = [
+            self.get_row(value, leaderboard_data)
+            for value in top_players[: leaderboard_data.max_items]
+        ]
+
+        all_table = t2a(
+            header=["#", "Name", "Rank", "Score", "K", "D"],
+            body=[
+                [index + 1, dt[0], dt[1], human_format(dt[2]), *dt[3:]]
+                for (index, dt) in enumerate(board_data)
             ],
-            key=lambda x: x[2],
-            reverse=True,
         )
-        text = (
-            "```"
-            + t2a(
-                header=["#", "Name", "Rank", "Score", "K", "D"],
-                body=[
-                    [index + 1, dt[0], dt[1], human_format(dt[2]), *dt[3:]]
-                    for (index, dt) in enumerate(
-                        board_data[: leaderboard_data.max_items]
+
+        texts: list[str] = []
+        chunk_size = 2000 - len("```\n\n```")
+        all_lines = all_table.splitlines()
+        curr_index = 0
+        line_count = len(all_lines)
+        while curr_index < line_count:
+            curr_chunk: str = "```\n"
+            next_expected_size = len(curr_chunk) + len(all_lines[curr_index]) + 4
+            while next_expected_size < chunk_size:
+                curr_line = all_lines[curr_index]
+                curr_chunk += curr_line + "\n"
+                curr_index += 1
+                if curr_index < line_count:
+                    next_expected_size = (
+                        len(curr_chunk) + len(all_lines[curr_index]) + 4
                     )
-                ],
-            )
-            + "```"
-        )
-        if self._message:
-            self._message = await self._message.edit(content=text)
-        else:
-            self._message = await self.channel.send(text)
-            asyncio.create_task(self.write_msg_id())
+                else:
+                    break
+            curr_chunk += "```"
+            texts.append(curr_chunk)
+        msgs_to_drop: list[discord.Message] = list(self._messages)
+        rewrite = False
+        for index, table_chunk in enumerate(texts):
+            msg: discord.Message | None = None
+            if index < len(msgs_to_drop):
+                msg = msgs_to_drop.pop(index)
+                await msg.edit(content=table_chunk)
+            else:
+                msg = await self.channel.send(table_chunk)
+                rewrite = True
+                self._messages.append(msg)
+        if len(msgs_to_drop):
+            for msg in msgs_to_drop:
+                self._messages.remove(msg)
+                asyncio.create_task(msg.delete())
+            rewrite = True
+        if rewrite:
+            asyncio.create_task(self.write_msg_ids())
 
 
 # region admin commands
 admin_cmds = bot.create_group("mng", "Admin commands")
 discordLeaderboard = Leaderboard(bot)
+
+
+@admin_cmds.command()
+@discord.default_permissions(administrator=True)
+@discord.guild_only()
+async def reload(ctx: discord.ApplicationContext, force_rewrite: bool = False):
+    try:
+        if CONFIG_BOT_CHANNEL_ID and ctx.channel_id != CONFIG_BOT_CHANNEL_ID:
+            await ctx.respond("Unauthorized")
+            return
+        config = await LeaderBoard.aload()
+        await discordLeaderboard.send_board(config, force_rewrite)
+        await ctx.respond("Done")
+    except Exception as e:
+        print(e)
+        await ctx.command.dispatch_error(ctx, e)
 
 
 @admin_cmds.command()
@@ -217,6 +279,31 @@ async def add_match(
         await config.asave()
         await discordLeaderboard.send_board(config)
         await ctx.respond("Done")
+    except Exception as e:
+        print(e)
+        await ctx.respond("ERROR")
+
+
+@admin_cmds.command()
+@discord.default_permissions(administrator=True)
+@discord.guild_only()
+async def metadata(
+    ctx: discord.ApplicationContext,
+):
+    try:
+        if CONFIG_BOT_CHANNEL_ID and ctx.channel_id != CONFIG_BOT_CHANNEL_ID:
+            await ctx.respond("Unauthorized")
+            return
+        config = await LeaderBoard.aload()
+        file_size = await LeaderBoard.afile_size()
+        embed = discord.Embed(title="Metadata", color=15844367)
+        embed.description = f"Data file size: {sizeof_fmt(file_size)}"
+        max_matches = max([len(p.matches) for p in config.players])
+        embed.add_field(
+            name=f"{len(config.players)} players in the system",
+            value=f"Max {max_matches} matches played",
+        )
+        await ctx.respond(embed=embed)
     except Exception as e:
         print(e)
         await ctx.respond("ERROR")

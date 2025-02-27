@@ -65,6 +65,14 @@ class IOBoundDataclass:
         return cls._load()
 
     @classmethod
+    async def afile_size(cls):
+        exists = await cls.aexists()
+        if not exists:
+            return 0
+        file_size = await aos.path.getsize(cls.get_path())
+        return file_size
+
+    @classmethod
     def aload(cls):
         return cls._aload()
 

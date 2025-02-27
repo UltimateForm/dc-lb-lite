@@ -3,7 +3,7 @@ import numpy as np
 
 
 def is_playfab_id_format(arg: str):
-    return re.search(r"^([\S]{15,16})+$", arg) is not None
+    return re.search(r"^([\S]{14,16})+$", arg) is not None
 
 
 def compute_gate(value: int, gates: list[int]) -> int | None:
@@ -56,3 +56,12 @@ def make_ordinal(n):
     else:
         suffix = ["th", "st", "nd", "rd", "th"][min(n % 10, 4)]
     return str(n) + suffix
+
+
+# source https://stackoverflow.com/questions/1094841/get-a-human-readable-version-of-a-file-size
+def sizeof_fmt(num, suffix="B"):
+    for unit in ("", "K", "M", "G", "T", "P", "E", "Z"):
+        if abs(num) < 1024.0:
+            return f"{num:3.1f}{unit}{suffix}"
+        num /= 1024.0
+    return f"{num:.1f}Yi{suffix}"

@@ -34,7 +34,7 @@ class Player:
 
     @property
     def avg_structure_damage(self) -> float:
-        return statistics.mean([match.structure_damage for match in self.matches])
+        return round(statistics.mean([match.structure_damage for match in self.matches]), 2)
 
     def as_dict(self) -> dict[str, Any]:
         self_dict = self.__dict__.copy()
