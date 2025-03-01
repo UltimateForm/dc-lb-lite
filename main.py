@@ -13,6 +13,7 @@ from parsers.main import (
     sizeof_fmt,
 )
 from aiofiles import open as aopen, os as aos
+from discord.ext.pages import Paginator, Page
 
 load_dotenv()
 
@@ -98,12 +99,12 @@ class Leaderboard(commands.Cog):
             await self.delete_previous_messages()
             asyncio.create_task(self.send_board())
 
-    def get_row(self, player_data: Player, config: LeaderBoard):
+    def get_row(self, player_data: Player, ranks: dict[str, str]):
         kills: int = player_data.total_kills
         deaths: int = player_data.total_deaths
         score = player_data.total_score
         (_, rank_txt) = compute_gate_text(
-            score, dict([(str(k), v) for (k, v) in config.rank_config.items()])
+            score, dict([(str(k), v) for (k, v) in ranks.items()])
         )
         return [
             player_data.name,
@@ -112,6 +113,29 @@ class Leaderboard(commands.Cog):
             kills,
             deaths,
         ]
+
+    def get_table(
+        self,
+        players: list[Player],
+        ranks: dict[str, str],
+        start: int = 0,
+        limit: int = 10,
+        sort: bool = True,
+    ):
+        top_players = (
+            sorted(players, key=lambda x: x.total_score, reverse=True)
+            if sort
+            else list(players)
+        )
+        board_data = [self.get_row(value, ranks) for value in top_players[:limit]]
+        all_table = t2a(
+            header=["#", "Name", "Rank", "Score", "K", "D"],
+            body=[
+                [start + index + 1, dt[0], dt[1], human_format(dt[2]), *dt[3:]]
+                for (index, dt) in enumerate(board_data)
+            ],
+        )
+        return all_table
 
     async def send_board(
         self, existing_leaderboard: LeaderBoard | None = None, force_rewrite=False
@@ -123,20 +147,11 @@ class Leaderboard(commands.Cog):
         leaderboard_data = existing_leaderboard
         if not leaderboard_data:
             leaderboard_data = await LeaderBoard.aload()
-        top_players = sorted(
-            leaderboard_data.players, key=lambda x: x.total_score, reverse=True
-        )
-        board_data = [
-            self.get_row(value, leaderboard_data)
-            for value in top_players[: leaderboard_data.max_items]
-        ]
-
-        all_table = t2a(
-            header=["#", "Name", "Rank", "Score", "K", "D"],
-            body=[
-                [index + 1, dt[0], dt[1], human_format(dt[2]), *dt[3:]]
-                for (index, dt) in enumerate(board_data)
-            ],
+        all_table = self.get_table(
+            leaderboard_data.players,
+            leaderboard_data.rank_config,
+            0,
+            leaderboard_data.max_items,
         )
 
         texts: list[str] = []
@@ -331,10 +346,10 @@ async def ranks(ctx: discord.ApplicationContext):
         await ctx.respond("ERROR")
 
 
-@bot.slash_command(description="show user match history")
+@bot.slash_command(description="show player leaderboard placement")
 @discord.default_permissions(send_messages=True)
 @discord.guild_only()
-async def mymh(ctx: discord.ApplicationContext, playfab_or_user_name: str):
+async def place(ctx: discord.ApplicationContext, playfab_or_user_name: str):
     try:
         config = await LeaderBoard.aload()
         player = config.get_player(playfab_or_user_name)
@@ -344,24 +359,81 @@ async def mymh(ctx: discord.ApplicationContext, playfab_or_user_name: str):
         if len(player.matches) < 1:
             await ctx.respond(f"No matches found with {playfab_or_user_name}")
             return
-        embed = discord.Embed(title="Your Match History", color=15844367)
-        for index, match in enumerate(player.matches):
-            embed.add_field(
-                name=f"{make_ordinal(index + 1)} match",
-                value=f"Score: {match.score} | Kills: {match.kills} | Deaths: {match.deaths} | Structure Damage: {match.structure_damage}%",
-                inline=False,
+        sorted_players = sorted(
+            config.players, key=lambda p: p.total_score, reverse=True
+        )
+        p_index = sorted_players.index(player)
+        place_start = max(0, p_index - 4)
+        place_end = min(len(sorted_players), p_index + 5)
+        snippet = sorted_players[place_start:place_end]
+        table = discordLeaderboard.get_table(
+            snippet, config.rank_config, place_start, sort=False
+        )
+        await ctx.respond("```\n" + table + "\n```")
+    except Exception as e:
+        print(e)
+        await ctx.respond("ERROR")
+
+
+@bot.slash_command(description="show player match history")
+@discord.default_permissions(send_messages=True)
+@discord.guild_only()
+async def mh(ctx: discord.ApplicationContext, playfab_or_user_name: str):
+    try:
+        config = await LeaderBoard.aload()
+        player = config.get_player(playfab_or_user_name)
+        if player is None:
+            await ctx.respond(f"Couldn't find player by id/name {playfab_or_user_name}")
+            return
+        if len(player.matches) < 1:
+            await ctx.respond(f"No matches found with {playfab_or_user_name}")
+            return
+        matches = player.matches
+        chunk_size = 10
+        description = f"{player.name} ({player.playfab_id})"
+        embeds: list[discord.Embed] = []
+        for chunk_index, chunk in enumerate(
+            list(
+                [
+                    matches[i: i + chunk_size]
+                    for i in range(0, len(matches), chunk_size)
+                ]
             )
-        await ctx.respond(embed=embed)
+        ):
+            embed = discord.Embed(
+                title="Match History",
+                color=15844367,
+                description=description,
+            )
+            base_line = chunk_index * chunk_size
+            for index, match in enumerate(chunk):
+                embed.add_field(
+                    name=f"{make_ordinal(base_line +index + 1)} match",
+                    value=f"Score: {match.score} | Kills: {match.kills} | Deaths: {match.deaths} | Structure Damage: {match.structure_damage}%",
+                    inline=False,
+                )
+            embed.set_footer(text="Use /score to check aggregated stats")
+            embeds.append(embed)
+        if len(embeds) == 1:
+            await ctx.respond(embed=embeds[0])
+        elif len(embeds) > 1:
+            paginator = Paginator(
+                pages=[Page(embeds=[em]) for em in embeds], author_check=True
+            )
+            await paginator.respond(ctx.interaction)
+        else:
+            raise Exception(f"{ctx.command}: Unexpected embed length {len(embeds)}")
+        # await ctx.respond(embed=embed)
 
     except Exception as e:
         print(e)
         await ctx.respond("ERROR")
 
 
-@bot.slash_command(description="show user score stats")
+@bot.slash_command(description="show player score stats")
 @discord.default_permissions(send_messages=True)
 @discord.guild_only()
-async def myscore(ctx: discord.ApplicationContext, playfab_or_user_name: str):
+async def score(ctx: discord.ApplicationContext, playfab_or_user_name: str):
     try:
         config = await LeaderBoard.aload()
         player = config.get_player(playfab_or_user_name)
@@ -376,7 +448,7 @@ async def myscore(ctx: discord.ApplicationContext, playfab_or_user_name: str):
         )
         rank_txt = rank_2_emoji(players_above)
         embed = discord.Embed(
-            title="Your Score",
+            title="Score",
             description=f"**{rank_txt}** {player.name} ({player.playfab_id})"
             + "\n"
             + f"```{human_format(player.total_score, 100000)} Points```",
@@ -402,6 +474,7 @@ async def myscore(ctx: discord.ApplicationContext, playfab_or_user_name: str):
             name=f"{len(player.matches)} matches played",
             value=f"{player.total_kills} Kills | {player.total_deaths} Deaths | {player.avg_structure_damage}% Avg Structure Dmg",
         )
+        embed.set_footer(text="Use /mh to check match history")
         await ctx.respond(embed=embed)
     except Exception as e:
         print(e)
