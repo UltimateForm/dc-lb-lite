@@ -49,8 +49,7 @@ def compute_next_gate_text(
 
 
 # source https://stackoverflow.com/questions/9647202/ordinal-numbers-replacement
-def make_ordinal(n):
-    n = int(n)
+def make_ordinal(n: int) -> str:
     if 11 <= (n % 100) <= 13:
         suffix = "th"
     else:

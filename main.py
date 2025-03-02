@@ -178,8 +178,9 @@ class Leaderboard(commands.Cog):
         rewrite = False
         for index, table_chunk in enumerate(texts):
             msg: discord.Message | None = None
-            if index < len(msgs_to_drop):
-                msg = msgs_to_drop.pop(index)
+            if index < len(self._messages):
+                msg = self._messages[index]
+                msgs_to_drop.remove(msg)
                 await msg.edit(content=table_chunk)
             else:
                 msg = await self.channel.send(table_chunk)
@@ -187,6 +188,7 @@ class Leaderboard(commands.Cog):
                 self._messages.append(msg)
         if len(msgs_to_drop):
             for msg in msgs_to_drop:
+                print(f"Dropping msg {msg.id}")
                 self._messages.remove(msg)
                 asyncio.create_task(msg.delete())
             rewrite = True
@@ -199,7 +201,7 @@ admin_cmds = bot.create_group("mng", "Admin commands")
 discordLeaderboard = Leaderboard(bot)
 
 
-@admin_cmds.command()
+@admin_cmds.command(description="reload board, force_rewrite=true will send new messages instead trying to edit current ones")
 @discord.default_permissions(administrator=True)
 @discord.guild_only()
 async def reload(ctx: discord.ApplicationContext, force_rewrite: bool = False):
@@ -207,6 +209,7 @@ async def reload(ctx: discord.ApplicationContext, force_rewrite: bool = False):
         if CONFIG_BOT_CHANNEL_ID and ctx.channel_id != CONFIG_BOT_CHANNEL_ID:
             await ctx.respond("Unauthorized")
             return
+        await ctx.defer()
         config = await LeaderBoard.aload()
         await discordLeaderboard.send_board(config, force_rewrite)
         await ctx.respond("Done")
@@ -215,7 +218,7 @@ async def reload(ctx: discord.ApplicationContext, force_rewrite: bool = False):
         await ctx.command.dispatch_error(ctx, e)
 
 
-@admin_cmds.command()
+@admin_cmds.command(description="set rank score gate")
 @discord.default_permissions(administrator=True)
 @discord.guild_only()
 async def set_rank(ctx: discord.ApplicationContext, score_gate: int, rank_name: str):
@@ -223,6 +226,7 @@ async def set_rank(ctx: discord.ApplicationContext, score_gate: int, rank_name: 
         if CONFIG_BOT_CHANNEL_ID and ctx.channel_id != CONFIG_BOT_CHANNEL_ID:
             await ctx.respond("Unauthorized")
             return
+        await ctx.defer()
         config = await LeaderBoard.aload()
         config.rank_config[str(score_gate)] = rank_name
         await config.asave()
@@ -233,7 +237,26 @@ async def set_rank(ctx: discord.ApplicationContext, score_gate: int, rank_name: 
         await ctx.command.dispatch_error(ctx, e)
 
 
-@admin_cmds.command()
+@admin_cmds.command(description="delete rank score gate")
+@discord.default_permissions(administrator=True)
+@discord.guild_only()
+async def del_rank(ctx: discord.ApplicationContext, score_gate: int):
+    try:
+        if CONFIG_BOT_CHANNEL_ID and ctx.channel_id != CONFIG_BOT_CHANNEL_ID:
+            await ctx.respond("Unauthorized")
+            return
+        await ctx.defer()
+        config = await LeaderBoard.aload()
+        config.rank_config.pop(str(score_gate))
+        await config.asave()
+        await discordLeaderboard.send_board(config)
+        await ctx.respond("Done")
+    except Exception as e:
+        print(e)
+        await ctx.command.dispatch_error(ctx, e)
+
+
+@admin_cmds.command(description="set max leaderboard rows")
 @discord.default_permissions(administrator=True)
 @discord.guild_only()
 async def max_leaderboard(ctx: discord.ApplicationContext, max: int):
@@ -241,6 +264,7 @@ async def max_leaderboard(ctx: discord.ApplicationContext, max: int):
         if CONFIG_BOT_CHANNEL_ID and ctx.channel_id != CONFIG_BOT_CHANNEL_ID:
             await ctx.respond("Unauthorized")
             return
+        await ctx.defer()
         config = await LeaderBoard.aload()
         config.max_items = max
         await config.asave()
@@ -251,7 +275,7 @@ async def max_leaderboard(ctx: discord.ApplicationContext, max: int):
         await ctx.command.dispatch_error(ctx, e)
 
 
-@admin_cmds.command()
+@admin_cmds.command(description="add player to the system")
 @discord.default_permissions(administrator=True)
 @discord.guild_only()
 async def add_player(ctx: discord.ApplicationContext, playfab_id: str, user_name: str):
@@ -259,6 +283,7 @@ async def add_player(ctx: discord.ApplicationContext, playfab_id: str, user_name
         if CONFIG_BOT_CHANNEL_ID and ctx.channel_id != CONFIG_BOT_CHANNEL_ID:
             await ctx.respond("Unauthorized")
             return
+        await ctx.defer()
         config = await LeaderBoard.aload()
         config.players.append(Player(user_name.strip(), playfab_id.strip()))
         await config.asave()
@@ -269,7 +294,121 @@ async def add_player(ctx: discord.ApplicationContext, playfab_id: str, user_name
         await ctx.respond("ERROR")
 
 
-@admin_cmds.command()
+@admin_cmds.command(description="removes player from the system")
+@discord.default_permissions(administrator=True)
+@discord.guild_only()
+async def rm_player(
+    ctx: discord.ApplicationContext,
+    playfab_or_user_name: str,
+):
+    try:
+        if CONFIG_BOT_CHANNEL_ID and ctx.channel_id != CONFIG_BOT_CHANNEL_ID:
+            await ctx.respond("Unauthorized")
+            return
+        await ctx.defer()
+        config = await LeaderBoard.aload()
+        player = config.get_player(playfab_or_user_name)
+        if player is None:
+            await ctx.respond(
+                f"Couldn't find player by id/name {playfab_or_user_name}."
+            )
+            return
+        config.players.remove(player)
+        await config.asave()
+        await discordLeaderboard.send_board(config)
+        await ctx.respond(
+            f"Done. Removed player {player.name} ({player.playfab_id}) from the system."
+        )
+    except Exception as e:
+        print(e)
+        await ctx.respond("ERROR")
+
+
+@admin_cmds.command(description="deletes player match")
+@discord.default_permissions(administrator=True)
+@discord.guild_only()
+async def del_match(
+    ctx: discord.ApplicationContext,
+    playfab_or_user_name: str,
+    match_number: int,
+):
+    try:
+        if CONFIG_BOT_CHANNEL_ID and ctx.channel_id != CONFIG_BOT_CHANNEL_ID:
+            await ctx.respond("Unauthorized")
+            return
+        await ctx.defer()
+        config = await LeaderBoard.aload()
+        player = config.get_player(playfab_or_user_name)
+        if player is None:
+            await ctx.respond(
+                f"Couldn't find player by id/name {playfab_or_user_name}. Run `/mng add_player` first to add player."
+            )
+            return
+        if match_number > len(player.matches):
+            await ctx.respond(
+                f"Match number {match_number} is out of bounds. Player {player.name} has {len(player.matches)} matches.",
+            )
+            return
+        player.matches.pop(match_number - 1)
+        await config.asave()
+        await discordLeaderboard.send_board(config)
+        await ctx.respond(
+            f"Done. Deleted {make_ordinal(match_number)} match for {player.name} ({player.playfab_id})."
+        )
+    except Exception as e:
+        print(e)
+        await ctx.respond("ERROR")
+
+
+@admin_cmds.command(description="edit player match")
+@discord.default_permissions(administrator=True)
+@discord.guild_only()
+async def edit_match(
+    ctx: discord.ApplicationContext,
+    playfab_or_user_name: str,
+    match_number: int,
+    structure_damage_percent: int | None = None,
+    score: int | None = None,
+    kills: int | None = None,
+    deaths: int | None = None,
+):
+    try:
+        if CONFIG_BOT_CHANNEL_ID and ctx.channel_id != CONFIG_BOT_CHANNEL_ID:
+            await ctx.respond("Unauthorized")
+            return
+        await ctx.defer()
+        config = await LeaderBoard.aload()
+        player = config.get_player(playfab_or_user_name)
+        if player is None:
+            await ctx.respond(
+                f"Couldn't find player by id/name {playfab_or_user_name}. Run `/mng add_player` first to add player."
+            )
+            return
+        if match_number > len(player.matches):
+            await ctx.respond(
+                f"Match number {match_number} is out of bounds. Player {player.name} has {len(player.matches)} matches.",
+            )
+            return
+        match = player.matches[match_number - 1]
+        if structure_damage_percent is not None:
+            match.structure_damage = structure_damage_percent
+        if score is not None:
+            match.score = score
+        if kills is not None:
+            match.kills = kills
+        if deaths is not None:
+            match.deaths = deaths
+        await config.asave()
+        await discordLeaderboard.send_board(config)
+        await ctx.respond(
+            f"Done. Edited {make_ordinal(match_number)} match for {player.name} ({player.playfab_id})."
+        )
+    except Exception as e:
+        print(e)
+        await ctx.respond("ERROR")
+
+
+@admin_cmds.command(description="add player match score")
 @discord.default_permissions(administrator=True)
 @discord.guild_only()
 async def add_match(
@@ -284,22 +423,27 @@ async def add_match(
         if CONFIG_BOT_CHANNEL_ID and ctx.channel_id != CONFIG_BOT_CHANNEL_ID:
             await ctx.respond("Unauthorized")
             return
+        await ctx.defer()
         config = await LeaderBoard.aload()
         player = config.get_player(playfab_or_user_name)
         if player is None:
-            await ctx.respond(f"Couldn't find player by id/name {playfab_or_user_name}")
+            await ctx.respond(
+                f"Couldn't find player by id/name {playfab_or_user_name}. Run `/mng add_player` first to add player"
+            )
             return
         match_data = GameMatch(kills, deaths, structure_damage_percent, score)
         player.matches.append(match_data)
         await config.asave()
         await discordLeaderboard.send_board(config)
-        await ctx.respond("Done")
+        await ctx.respond(
+            f"Done. Added {make_ordinal(len(player.matches))} match for {player.name} ({player.playfab_id})."
+        )
     except Exception as e:
         print(e)
         await ctx.respond("ERROR")
 
 
-@admin_cmds.command()
+@admin_cmds.command(description="show system metadata")
 @discord.default_permissions(administrator=True)
 @discord.guild_only()
 async def metadata(
@@ -309,6 +453,7 @@ async def metadata(
         if CONFIG_BOT_CHANNEL_ID and ctx.channel_id != CONFIG_BOT_CHANNEL_ID:
             await ctx.respond("Unauthorized")
             return
+        await ctx.defer()
         config = await LeaderBoard.aload()
         file_size = await LeaderBoard.afile_size()
         embed = discord.Embed(title="Metadata", color=15844367)
