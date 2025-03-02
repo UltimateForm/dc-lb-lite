@@ -16,7 +16,6 @@ numpy = "*"
 [dev-packages]
 flake8 = "*"
 flake8-async = "*"
-pytest = "*"
 faker = "*"
 pyright = "*"
 
