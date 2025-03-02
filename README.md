@@ -16,4 +16,4 @@ Requires shell enabled terminal with docker installed
 	D_TOKEN=<BOT TOKEN>
 	```
 3. run `sh restart.sh`
-   1. this will execute the necessary commands to run the bot in a docker contaienr, check the `restart.sh` file if you need to change how the bot is run (i.e. running it without docker container)
+   1. this will execute the necessary commands to run the bot in a docker container, check the `restart.sh` file if you need to change how the bot is run (i.e. running it without docker container)
