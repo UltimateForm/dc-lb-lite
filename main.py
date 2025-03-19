@@ -11,6 +11,7 @@ from parsers.main import (
     compute_gate_text,
     make_ordinal,
     sizeof_fmt,
+    split_chunks,
 )
 from aiofiles import open as aopen, os as aos
 from discord.ext.pages import Paginator, Page
@@ -154,29 +155,12 @@ class Leaderboard(commands.Cog):
             leaderboard_data.max_items,
         )
 
-        texts: list[str] = []
         chunk_size = 2000 - len("```\n\n```")
-        all_lines = all_table.splitlines()
-        curr_index = 0
-        line_count = len(all_lines)
-        while curr_index < line_count:
-            curr_chunk: str = "```\n"
-            next_expected_size = len(curr_chunk) + len(all_lines[curr_index]) + 4
-            while next_expected_size < chunk_size:
-                curr_line = all_lines[curr_index]
-                curr_chunk += curr_line + "\n"
-                curr_index += 1
-                if curr_index < line_count:
-                    next_expected_size = (
-                        len(curr_chunk) + len(all_lines[curr_index]) + 4
-                    )
-                else:
-                    break
-            curr_chunk += "```"
-            texts.append(curr_chunk)
+        chunks = map(lambda x: "```\n" + x + "```", split_chunks(all_table, chunk_size))
+
         msgs_to_drop: list[discord.Message] = list(self._messages)
         rewrite = False
-        for index, table_chunk in enumerate(texts):
+        for index, table_chunk in enumerate(chunks):
             msg: discord.Message | None = None
             if index < len(self._messages):
                 msg = self._messages[index]
@@ -201,7 +185,9 @@ admin_cmds = bot.create_group("mng", "Admin commands")
 discordLeaderboard = Leaderboard(bot)
 
 
-@admin_cmds.command(description="reload board, force_rewrite=true will send new messages instead trying to edit current ones")
+@admin_cmds.command(
+    description="reload board, force_rewrite=true will send new messages instead trying to edit current ones"
+)
 @discord.default_permissions(administrator=True)
 @discord.guild_only()
 async def reload(ctx: discord.ApplicationContext, force_rewrite: bool = False):

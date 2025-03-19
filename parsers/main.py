@@ -64,3 +64,19 @@ def sizeof_fmt(num, suffix="B"):
             return f"{num:3.1f}{unit}{suffix}"
         num /= 1024.0
     return f"{num:.1f}Yi{suffix}"
+
+
+def split_chunks(sample: str, chunk_size: int) -> list[str]:
+    lines = sample.splitlines()
+    batches: list[str] = []
+    while lines:
+        curr = lines.pop(0) + "\n"
+        if not batches:
+            batches.append(curr)
+        else:
+            new_len = len(batches[-1] + curr)
+            if new_len < chunk_size:
+                batches[-1] += curr
+            else:
+                batches.append(curr)
+    return batches
