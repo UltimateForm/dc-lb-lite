@@ -29,14 +29,28 @@ CONFIG_BOT_CHANNEL_ID = (
 bot = discord.Bot()
 
 
+def custom_format(number: float, precision: int):
+    if number == 0:
+        return "0"
+    elif number < 1:
+        return f"{number:.{precision}f}".rstrip("0").rstrip(".")
+    else:
+        integer_part = int(number)
+        decimal_part = number - integer_part
+        if decimal_part == 0:
+            return str(integer_part)
+        else:
+            return f"{integer_part}.{str(decimal_part)[2:precision+2]}"
+
+
 def human_format(number: int, min: int = 1000) -> str:
     if number < min:
         return str(number)
     units = ["", "K", "M", "G", "T", "P"]
     k = 1000.0
     magnitude = int(math.floor(math.log(number, k)))
-    value = str(round(number / k**magnitude, 1)).removesuffix(r".0")
-    return value + units[magnitude]
+    formatted_number = custom_format(number / k**magnitude, 1)
+    return "{}{}".format(formatted_number, units[magnitude])
 
 
 def rank_2_emoji(n: int):
@@ -132,7 +146,14 @@ class Leaderboard(commands.Cog):
         all_table = t2a(
             header=["#", "Name", "Rank", "Score", "K", "D"],
             body=[
-                [start + index + 1, dt[0], dt[1], human_format(dt[2]), *dt[3:]]
+                [
+                    start + index + 1,
+                    dt[0],
+                    dt[1],
+                    human_format(dt[2], 10000),
+                    human_format(dt[3], 10000),
+                    human_format(dt[4], 10000),
+                ]
                 for (index, dt) in enumerate(board_data)
             ],
         )
@@ -150,7 +171,7 @@ class Leaderboard(commands.Cog):
             leaderboard_data = await LeaderBoard.aload()
         all_table = self.get_table(
             leaderboard_data.players,
-            leaderboard_data.rank_config,
+            leaderboard_data.aliased_ranks(),
             0,
             leaderboard_data.max_items,
         )
@@ -207,7 +228,12 @@ async def reload(ctx: discord.ApplicationContext, force_rewrite: bool = False):
 @admin_cmds.command(description="set rank score gate")
 @discord.default_permissions(administrator=True)
 @discord.guild_only()
-async def set_rank(ctx: discord.ApplicationContext, score_gate: int, rank_name: str):
+async def set_rank(
+    ctx: discord.ApplicationContext,
+    score_gate: int,
+    rank_name: str,
+    short_name: str | None = None,
+):
     try:
         if CONFIG_BOT_CHANNEL_ID and ctx.channel_id != CONFIG_BOT_CHANNEL_ID:
             await ctx.respond("Unauthorized")
@@ -215,6 +241,10 @@ async def set_rank(ctx: discord.ApplicationContext, score_gate: int, rank_name: 
         await ctx.defer()
         config = await LeaderBoard.aload()
         config.rank_config[str(score_gate)] = rank_name
+        if short_name:
+            if not config.rank_short:
+                config.rank_short = dict()
+            config.rank_short[str(score_gate)] = short_name
         await config.asave()
         await discordLeaderboard.send_board(config)
         await ctx.respond("Done")
@@ -498,7 +528,7 @@ async def place(ctx: discord.ApplicationContext, playfab_or_user_name: str):
         place_end = min(len(sorted_players), p_index + 5)
         snippet = sorted_players[place_start:place_end]
         table = discordLeaderboard.get_table(
-            snippet, config.rank_config, place_start, sort=False
+            snippet, config.aliased_ranks(), place_start, sort=False
         )
         await ctx.respond("```\n" + table + "\n```")
     except Exception as e:

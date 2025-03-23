@@ -34,7 +34,9 @@ class Player:
 
     @property
     def avg_structure_damage(self) -> float:
-        return round(statistics.mean([match.structure_damage for match in self.matches]), 2)
+        return round(
+            statistics.mean([match.structure_damage for match in self.matches]), 2
+        )
 
     def as_dict(self) -> dict[str, Any]:
         self_dict = self.__dict__.copy()
@@ -47,6 +49,7 @@ class LeaderBoard(IOBoundDataclass):
     players: list[Player] = field(default_factory=list)
     max_items: int = 30
     rank_config: dict[str, str] = field(default_factory=dict)
+    rank_short: dict[str, str] | None = field(default_factory=dict)
 
     @classmethod
     def get_path(cls) -> str:
@@ -56,6 +59,10 @@ class LeaderBoard(IOBoundDataclass):
         self_dict = super().as_dict()
         self_dict["players"] = list(player.as_dict() for player in self.players)
         return self_dict
+
+    def aliased_ranks(self):
+        aliases = self.rank_short or dict()
+        return {k: aliases.get(k, v) for k, v in self.rank_config.items()}
 
     def get_player(self, playfab_or_user_name: str) -> Player | None:
         player: Player | None = None
