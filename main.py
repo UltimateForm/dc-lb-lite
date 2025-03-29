@@ -429,7 +429,8 @@ async def edit_match(
 @discord.guild_only()
 async def add_match(
     ctx: discord.ApplicationContext,
-    playfab_or_user_name: str,
+    playfab_id: str | None = None,
+    user_name: str | None = "",
     structure_damage_percent: int = 0,
     score: int = 0,
     kills: int = 0,
@@ -441,18 +442,36 @@ async def add_match(
             return
         await ctx.defer()
         config = await LeaderBoard.aload()
-        player = config.get_player(playfab_or_user_name)
-        if player is None:
+        if not playfab_id and not user_name:
             await ctx.respond(
-                f"Couldn't find player by id/name {playfab_or_user_name}. Run `/mng add_player` first to add player"
+                "ERROR: "
+                + "Provide either playfab_id or user_name to identify player."
+                + "Provide both if not sure whether player exists, in which case they will be created in the system."
             )
             return
+        player = config.get_player(playfab_id or user_name or "")
+        new_player = False
+        if player is None:
+            if playfab_id and user_name:
+                player = Player(user_name.strip(), playfab_id.strip())
+                config.players.append(player)
+                new_player = True
+            else:
+                await ctx.respond(
+                    f"Couldn't find player by id/name {playfab_id or user_name}."
+                    + "Run `/mng add_player` first to add player "
+                    + "**or provide both playfab_id and user_name when calling** `add_match`"
+                )
+                return
         match_data = GameMatch(kills, deaths, structure_damage_percent, score)
         player.matches.append(match_data)
         await config.asave()
         await discordLeaderboard.send_board(config)
+        player_txt = f"{player.name} ({player.playfab_id})"
+        if new_player:
+            player_txt += " **[new player]**"
         await ctx.respond(
-            f"Done. Added {make_ordinal(len(player.matches))} match for {player.name} ({player.playfab_id})."
+            f"Done. Added {make_ordinal(len(player.matches))} match for {player_txt}."
         )
     except Exception as e:
         print(e)
