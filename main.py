@@ -1,3 +1,4 @@
+import aiofiles
 import discord
 import discord.ext.commands as commands
 import os
@@ -15,6 +16,8 @@ from parsers.main import (
 )
 from aiofiles import open as aopen, os as aos
 from discord.ext.pages import Paginator, Page
+import io
+import json
 
 load_dotenv()
 
@@ -500,6 +503,35 @@ async def metadata(
             value=f"Max {max_matches} matches played",
         )
         await ctx.respond(embed=embed)
+    except Exception as e:
+        print(e)
+        await ctx.respond("ERROR")
+
+
+@admin_cmds.command(description="get full system json")
+@discord.default_permissions(administrator=True)
+@discord.guild_only()
+async def get_json(
+    ctx: discord.ApplicationContext,
+):
+    try:
+        if CONFIG_BOT_CHANNEL_ID and ctx.channel_id != CONFIG_BOT_CHANNEL_ID:
+            await ctx.respond("Unauthorized")
+            return
+        await ctx.defer()
+        async with aiofiles.open(LeaderBoard.get_path(), "r") as config_file:
+            file_content = await config_file.read()
+            await ctx.respond(
+                file=discord.File(
+                    io.BytesIO(
+                        bytes(
+                            json.dumps(json.loads(file_content), indent=2),
+                            encoding="utf8",
+                        )
+                    ),
+                    "leaderboard.json",
+                ),
+            )
     except Exception as e:
         print(e)
         await ctx.respond("ERROR")
