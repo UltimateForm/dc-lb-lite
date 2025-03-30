@@ -432,8 +432,8 @@ async def edit_match(
 @discord.guild_only()
 async def add_match(
     ctx: discord.ApplicationContext,
-    playfab_id: str | None = "default",
-    user_name: str | None = "",
+    playfab_id: str | None = None,
+    user_name: str | None = None,
     structure_damage_percent: int = 0,
     score: int = 0,
     kills: int = 0,
