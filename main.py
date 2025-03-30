@@ -576,7 +576,7 @@ async def mh(ctx: discord.ApplicationContext, playfab_or_user_name: str):
         for chunk_index, chunk in enumerate(
             list(
                 [
-                    matches[i : i + chunk_size]
+                    matches[i: i + chunk_size]
                     for i in range(0, len(matches), chunk_size)
                 ]
             )
