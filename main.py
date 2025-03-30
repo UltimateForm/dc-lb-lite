@@ -429,7 +429,7 @@ async def edit_match(
 @discord.guild_only()
 async def add_match(
     ctx: discord.ApplicationContext,
-    playfab_id: str | None = None,
+    playfab_id: str | None = "default",
     user_name: str | None = "",
     structure_damage_percent: int = 0,
     score: int = 0,
@@ -463,7 +463,8 @@ async def add_match(
                     + "**or provide both playfab_id and user_name when calling** `add_match`"
                 )
                 return
-        match_data = GameMatch(kills, deaths, structure_damage_percent, score)
+        proper_score = score if not new_player else score + 2000
+        match_data = GameMatch(kills, deaths, structure_damage_percent, proper_score)
         player.matches.append(match_data)
         await config.asave()
         await discordLeaderboard.send_board(config)
@@ -575,7 +576,7 @@ async def mh(ctx: discord.ApplicationContext, playfab_or_user_name: str):
         for chunk_index, chunk in enumerate(
             list(
                 [
-                    matches[i: i + chunk_size]
+                    matches[i : i + chunk_size]
                     for i in range(0, len(matches), chunk_size)
                 ]
             )
