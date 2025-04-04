@@ -12,6 +12,7 @@ reactivex = "*"
 table2ascii = "*"
 dacite = "*"
 numpy = "*"
+pygrok = "*"
 
 [dev-packages]
 flake8 = "*"
@@ -25,3 +26,4 @@ typecheck = "pyright"
 
 [requires]
 python_version = "3.11"
+

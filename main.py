@@ -18,13 +18,22 @@ from aiofiles import open as aopen, os as aos
 from discord.ext.pages import Paginator, Page
 import io
 import json
+from common import logger
+from score_tracker.main import ScoreTracker
+
+logger.use_date_time_logger()
 
 load_dotenv()
 
 channel_id_raw = os.environ.get("LEADERBOARD_CHANNEL", "")
-print(f"LOADING LEADERBOARD_CHANNEL {channel_id_raw}")
+logger.info(f"LOADING LEADERBOARD_CHANNEL {channel_id_raw}")
 config_bot_channel_id_raw = os.environ.get("CONFIG_BOT_CHANNEL", "")
-print(f"LOADING CONFIG BOT CHANNEL {config_bot_channel_id_raw}")
+logger.info(f"LOADING CONFIG BOT CHANNEL {config_bot_channel_id_raw}")
+admin_id = os.environ.get("ADMIN_FFID", None)
+logger.info(f"LOADING ADMINID {admin_id}")
+if not admin_id:
+    raise Exception("ADMIN ID NOT LOADED")
+
 CHANNEL_ID = int(channel_id_raw) if channel_id_raw.isnumeric() else 0
 CONFIG_BOT_CHANNEL_ID = (
     int(config_bot_channel_id_raw) if config_bot_channel_id_raw.isnumeric() else 0
@@ -90,7 +99,7 @@ class Leaderboard(commands.Cog):
             msg = await self.channel.fetch_message(parsed_msg_id)
             await msg.delete()
         except Exception as e:
-            print(f"Failed to delete previous msg {msg_id}. {e}")
+            logger.error(f"Failed to delete previous msg {msg_id}. {e}")
 
     async def delete_previous_messages(self) -> str | None:
         if self.channel is None:
@@ -106,11 +115,11 @@ class Leaderboard(commands.Cog):
             tasks = [self.delete_msg(id.strip()) for id in msg_ids]
             await asyncio.gather(*tasks)
         except Exception as e:
-            print(e)
+            logger.error(e)
 
     @commands.Cog.listener()
     async def on_ready(self):
-        print("Leaderboard is ready!")
+        logger.info("Leaderboard is ready!")
         channel = await self.bot.fetch_channel(CHANNEL_ID)
         if isinstance(channel, discord.abc.Messageable):
             self.channel = channel
@@ -196,7 +205,7 @@ class Leaderboard(commands.Cog):
                 self._messages.append(msg)
         if len(msgs_to_drop):
             for msg in msgs_to_drop:
-                print(f"Dropping msg {msg.id}")
+                logger.info(f"Dropping msg {msg.id}")
                 self._messages.remove(msg)
                 asyncio.create_task(msg.delete())
             rewrite = True
@@ -224,7 +233,7 @@ async def reload(ctx: discord.ApplicationContext, force_rewrite: bool = False):
         await discordLeaderboard.send_board(config, force_rewrite)
         await ctx.respond("Done")
     except Exception as e:
-        print(e)
+        logger.error(e)
         await ctx.command.dispatch_error(ctx, e)
 
 
@@ -252,7 +261,7 @@ async def set_rank(
         await discordLeaderboard.send_board(config)
         await ctx.respond("Done")
     except Exception as e:
-        print(e)
+        logger.error(e)
         await ctx.command.dispatch_error(ctx, e)
 
 
@@ -271,7 +280,7 @@ async def del_rank(ctx: discord.ApplicationContext, score_gate: int):
         await discordLeaderboard.send_board(config)
         await ctx.respond("Done")
     except Exception as e:
-        print(e)
+        logger.error(e)
         await ctx.command.dispatch_error(ctx, e)
 
 
@@ -290,7 +299,7 @@ async def max_leaderboard(ctx: discord.ApplicationContext, max: int):
         await discordLeaderboard.send_board(config)
         await ctx.respond("Done")
     except Exception as e:
-        print(e)
+        logger.error(e)
         await ctx.command.dispatch_error(ctx, e)
 
 
@@ -309,7 +318,7 @@ async def add_player(ctx: discord.ApplicationContext, playfab_id: str, user_name
         await discordLeaderboard.send_board(config)
         await ctx.respond("Done")
     except Exception as e:
-        print(e)
+        logger.error(e)
         await ctx.respond("ERROR")
 
 
@@ -339,7 +348,7 @@ async def rm_player(
             f"Done. Removed player {player.name} ({player.playfab_id}) from the system."
         )
     except Exception as e:
-        print(e)
+        logger.error(e)
         await ctx.respond("ERROR")
 
 
@@ -375,7 +384,7 @@ async def del_match(
             f"Done. Deleted {make_ordinal(match_number)} match for {player.name} ({player.playfab_id})."
         )
     except Exception as e:
-        print(e)
+        logger.error(e)
         await ctx.respond("ERROR")
 
 
@@ -423,7 +432,7 @@ async def edit_match(
             f"Done. Edited {make_ordinal(match_number)} match for {player.name} ({player.playfab_id})."
         )
     except Exception as e:
-        print(e)
+        logger.error(e)
         await ctx.respond("ERROR")
 
 
@@ -478,7 +487,7 @@ async def add_match(
             f"Done. Added {make_ordinal(len(player.matches))} match for {player_txt}."
         )
     except Exception as e:
-        print(e)
+        logger.error(e)
         await ctx.respond("ERROR")
 
 
@@ -504,7 +513,7 @@ async def metadata(
         )
         await ctx.respond(embed=embed)
     except Exception as e:
-        print(e)
+        logger.error(e)
         await ctx.respond("ERROR")
 
 
@@ -533,7 +542,7 @@ async def get_json(
                 ),
             )
     except Exception as e:
-        print(e)
+        logger.error(e)
         await ctx.respond("ERROR")
 
 
@@ -555,7 +564,7 @@ async def ranks(ctx: discord.ApplicationContext):
         ranks_txt = "```\n" + all_ranks_txt + "\n```"
         await ctx.respond(ranks_txt)
     except Exception as e:
-        print(e)
+        logger.error(e)
         await ctx.respond("ERROR")
 
 
@@ -584,7 +593,7 @@ async def place(ctx: discord.ApplicationContext, playfab_or_user_name: str):
         )
         await ctx.respond("```\n" + table + "\n```")
     except Exception as e:
-        print(e)
+        logger.error(e)
         await ctx.respond("ERROR")
 
 
@@ -639,7 +648,7 @@ async def mh(ctx: discord.ApplicationContext, playfab_or_user_name: str):
         # await ctx.respond(embed=embed)
 
     except Exception as e:
-        print(e)
+        logger.error(e)
         await ctx.respond("ERROR")
 
 
@@ -694,5 +703,7 @@ async def score(ctx: discord.ApplicationContext, playfab_or_user_name: str):
         await ctx.respond("ERROR")
 
 
+score_tracker = ScoreTracker(bot, CONFIG_BOT_CHANNEL_ID, admin_id)
+bot.add_cog(score_tracker)
 bot.add_cog(discordLeaderboard)
 bot.run(os.environ["D_TOKEN"])
