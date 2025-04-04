@@ -35,16 +35,16 @@ class ScoreTracker(commands.Cog):
     async def handle_killfeed_event(self, ev: KillfeedEvent):
         if not self._match_running:
             return
-        asyncio.create_task(
-            self._channel.send(
-                f"```{ev.user_name} ({ev.killer_id}) has killed {ev.killed_user_name} ({ev.killed_id})```"
-            )
-        )
         hunter_id = ev.killer_id
         victim_id = ev.killed_id
         current_ids = self._tracking.keys()
         if hunter_id not in current_ids or victim_id not in current_ids:
             return
+        asyncio.create_task(
+            self._channel.send(
+                f"```{ev.user_name} ({ev.killer_id}) has killed {ev.killed_user_name} ({ev.killed_id})```"
+            )
+        )
         current_hunter = self._tracking[hunter_id]
         current_victim = self._tracking[victim_id]
         if not current_hunter.user_name:
