@@ -40,8 +40,8 @@ class ScoreTracker(commands.Cog):
                 f"```{ev.user_name} ({ev.killer_id}) has killed {ev.killed_user_name} ({ev.killed_id})```"
             )
         )
-        hunter_id = ev.killed_id
-        victim_id = ev.killer_id
+        hunter_id = ev.killer_id
+        victim_id = ev.killed_id
         current_ids = self._tracking.keys()
         if hunter_id not in current_ids or victim_id not in current_ids:
             return
