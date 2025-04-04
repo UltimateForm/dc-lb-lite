@@ -14,6 +14,12 @@ COPY ./parsers/ ./parsers/
 
 COPY ./models/ ./models/
 
+COPY ./common/ ./common/
+
+COPY ./rcon/ ./rcon/
+
+COPY ./score_tracker/ ./score_tracker/
+
 COPY ./main.py ./
 
 CMD ["pipenv", "run", "python", "main.py"]
