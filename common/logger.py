@@ -23,7 +23,7 @@ def warning(msg: str):
 def error(msg: str | Exception):
     msg_to_log = msg
     if isinstance(msg, Exception):
-        msg_to_log = str("msg")
+        msg_to_log = str(msg)
     logging.error(msg_to_log)
 
 
