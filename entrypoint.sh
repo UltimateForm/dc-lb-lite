@@ -2,7 +2,6 @@
 
 cd /home/container || exit 1
 
-eval ${MODIFIED_STARTUP}
 
 if [ -d "/home/container/dc-lb-lite" ]; then
 		echo "dc-lb-lite directory already exists, skipping clone."
@@ -15,4 +14,10 @@ fi
 
 
 cd dc-lb-lite
-python main.py
+
+if [[ -z "${STARTUP}" ]]; then
+		echo "CUSTOM STARTUP DEFINED: '${STARTUP}'"
+		${STARTUP}
+else
+		python -u main.py
+fi
