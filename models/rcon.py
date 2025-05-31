@@ -56,4 +56,3 @@ class KillRecord:
 @dataclass
 class PlayerStore:
     players: dict[str, str] = field(default_factory=dict)
-
