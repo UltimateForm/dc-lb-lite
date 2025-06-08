@@ -6,7 +6,7 @@ from rcon.rcon_listener import RconListener
 
 # from reactivex import Observable
 import asyncio
-from parsers.rcon import parse_chat_event, parse_killfeed_event, parse_kov_add
+from parsers.grok import parse_chat_event, parse_killfeed_event, parse_kov_add
 from models.rcon import ChatEvent, KillfeedEvent, Player
 from common import logger
 import re

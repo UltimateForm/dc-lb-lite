@@ -22,4 +22,6 @@ COPY ./score_tracker/ ./score_tracker/
 
 COPY ./main.py ./
 
+COPY ./compute/ ./compute/
+
 CMD ["pipenv", "run", "python", "main.py"]
