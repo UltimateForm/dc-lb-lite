@@ -1,6 +1,7 @@
 from datetime import datetime
 from pygrok import Grok
 import re
+from models.match_parse import MatchInput, MatchInputPlayer
 from models.rcon import (
     ChatEvent,
     KillfeedEvent,
@@ -19,6 +20,8 @@ GROK_PLAYERLIST_ROW = (
 )
 GROK_MATCHSTATE = r"MatchState: %{GREEDYDATA:state}"
 GROK_KOV_ADD = r".kov %{NOTSPACE:team} add %{NOTSPACE:id}"
+GROK_MATCH_HEAD = r"MATCH %{NUMBER:match_num} - TEAM %{NUMBER:winning_team} WINS"
+GROK_MATCH_ROW = r"%{GREEDYDATA:user_name}\s+\(%{NOTSPACE:playfab_id}\)\s+-\s+%{NUMBER:structure_damage}%\s+DMG\s+-\s+K\s+%{NUMBER:kills}\s+\|\s+D\s+%{NUMBER:deaths}"
 
 
 def parse_event(event: str, grok_pattern: str) -> tuple[bool, dict[str, str] | None]:
@@ -79,3 +82,27 @@ def parse_matchstate(raw: str) -> str | None:
 
 def is_playfab_id_format(arg: str):
     return re.search(r"^([\S]{14,16})+$", arg) is not None
+
+
+def parse_match_input(raw: str) -> MatchInput | None:
+    (success, parsed) = parse_event(raw, GROK_MATCH_HEAD)
+    if not success or not parsed:
+        return None
+    match_num = parsed.get("match_num", "0")
+    winning_team = parsed.get("winning_team", "0")
+    return MatchInput(int(winning_team), int(match_num))
+
+
+def parse_match_row(raw: str) -> MatchInputPlayer | None:
+    (success, parsed) = parse_event(raw, GROK_MATCH_ROW)
+    if not success or not parsed:
+        return None
+
+    structure_damage = int(parsed.get("structure_damage", "0"))
+    kills = int(parsed.get("kills", "0"))
+    deaths = int(parsed.get("deaths", "0"))
+
+    match_input_player = MatchInputPlayer(
+        parsed["user_name"], parsed["playfab_id"], structure_damage, kills, deaths
+    )
+    return match_input_player

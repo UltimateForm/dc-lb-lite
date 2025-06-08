@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 import math
 import asyncio
 from table2ascii import table2ascii as t2a
+from models.match_parse import MatchInputPlayer
 from models.players import LeaderBoard, Player, GameMatch
 from parsers.main import (
     compute_next_gate_text,
@@ -13,6 +14,7 @@ from parsers.main import (
     make_ordinal,
     sizeof_fmt,
     split_chunks,
+    parse_matches,
 )
 from aiofiles import open as aopen, os as aos
 from discord.ext.pages import Paginator, Page
@@ -436,6 +438,30 @@ async def edit_match(
         await ctx.respond("ERROR")
 
 
+def push_match(
+    config: LeaderBoard,
+    playfab_id: str | None = None,
+    user_name: str | None = None,
+    structure_damage_percent: int = 0,
+    score: int = 0,
+    kills: int = 0,
+    deaths: int = 0,
+) -> tuple[Player | None, bool]:
+    player = config.get_player(playfab_id or user_name or "")
+    new_player = False
+    if player is None:
+        if playfab_id and user_name:
+            player = Player(user_name.strip(), playfab_id.strip())
+            config.players.append(player)
+            new_player = True
+        else:
+            return (None, False)
+    proper_score = score if not new_player else score + 2000
+    match_data = GameMatch(kills, deaths, structure_damage_percent, proper_score)
+    player.matches.append(match_data)
+    return (player, new_player)
+
+
 @admin_cmds.command(description="add player match score")
 @discord.default_permissions(administrator=True)
 @discord.guild_only()
@@ -454,30 +480,22 @@ async def add_match(
             return
         await ctx.defer()
         config = await LeaderBoard.aload()
-        if not playfab_id and not user_name:
+        (player, new_player) = push_match(
+            config,
+            playfab_id,
+            user_name,
+            structure_damage_percent,
+            score,
+            kills,
+            deaths,
+        )
+        if not player:
             await ctx.respond(
                 "ERROR: "
                 + "Provide either playfab_id or user_name to identify player."
                 + "Provide both if not sure whether player exists, in which case they will be created in the system."
             )
             return
-        player = config.get_player(playfab_id or user_name or "")
-        new_player = False
-        if player is None:
-            if playfab_id and user_name:
-                player = Player(user_name.strip(), playfab_id.strip())
-                config.players.append(player)
-                new_player = True
-            else:
-                await ctx.respond(
-                    f"Couldn't find player by id/name {playfab_id or user_name}."
-                    + "Run `/mng add_player` first to add player "
-                    + "**or provide both playfab_id and user_name when calling** `add_match`"
-                )
-                return
-        proper_score = score if not new_player else score + 2000
-        match_data = GameMatch(kills, deaths, structure_damage_percent, proper_score)
-        player.matches.append(match_data)
         await config.asave()
         await discordLeaderboard.send_board(config)
         player_txt = f"{player.name} ({player.playfab_id})"
@@ -486,6 +504,103 @@ async def add_match(
         await ctx.respond(
             f"Done. Added {make_ordinal(len(player.matches))} match for {player_txt}."
         )
+    except Exception as e:
+        logger.error(e)
+        await ctx.respond("ERROR")
+
+
+BULK_STAGED: list[MatchInputPlayer] = []
+
+
+@admin_cmds.command(description="add matches from a file")
+@discord.default_permissions(send_messages=True)
+@discord.guild_only()
+@discord.option("file", type=discord.SlashCommandOptionType.attachment)
+async def bulk_match(
+    ctx: discord.ApplicationContext,
+    file: discord.message.Attachment,
+    page_size: int = 3,
+):
+    try:
+        await ctx.defer()
+        textBytes = await file.read()
+        textStr = textBytes.decode()
+        matches = parse_matches(textStr)
+        embeds: list[discord.Embed] = []
+        while len(matches) > 0:
+            removed = [matches.pop(0) for m in range(min(len(matches), page_size))]
+            page_embed = discord.Embed(
+                title="Bulk Add Match",
+                description="`/mng confirm` to confirm addition\n`/mng reject` to reject addition",
+                color=15844367,
+            )
+            for match in removed:
+                match_txt = ""
+                for index, team in enumerate([match.team_1, match.team_2]):
+                    winning_team = index + 1 == match.winning_team
+                    for player in team:
+                        BULK_STAGED.append(player)
+                        match_txt += (
+                            f"- T{index+1}({'W' if winning_team else 'L'}) {player.user_name} ({player.playfab_id}): "
+                            f"Score {player.score} (KD SCORE {player.debug_kd_score}); "
+                            f"{player.kills} kills; {player.deaths} deaths; "
+                            f"{player.structure_damage}% structure damage\n"
+                        )
+                page_embed.add_field(
+                    name=f"Match {match.match_num}", value=match_txt, inline=False
+                )
+            embeds.append(page_embed)
+        paginator = Paginator(
+            pages=[Page(embeds=[em]) for em in embeds], author_check=True
+        )
+        await paginator.respond(ctx.interaction)
+        # await ctx.respond(embed=embed)
+    except Exception as e:
+        logger.error(e)
+        await ctx.respond("ERROR")
+
+
+@admin_cmds.command(description="confirm bulk add match")
+@discord.default_permissions(administrator=True)
+@discord.guild_only()
+async def confirm(ctx: discord.ApplicationContext):
+    try:
+        if len(BULK_STAGED) == 0:
+            await ctx.respond("Nothing is staged")
+            return
+        await ctx.defer()
+        config = await LeaderBoard.aload()
+        txt = ""
+        for player in BULK_STAGED:
+            (added, new_player) = push_match(
+                config,
+                player.playfab_id,
+                player.user_name,
+                player.structure_damage,
+                player.score,
+                player.kills,
+                player.deaths,
+            )
+            txt += f"- {player.user_name} ({player.playfab_id}): Success: {bool(added)}; New: {new_player}\n"
+        await config.asave()
+        await discordLeaderboard.send_board(config)
+        chunk_size = 2000 - len("```\n\n```")
+        chunks = map(lambda x: "```\n" + x + "```", split_chunks(txt, chunk_size))
+        for chunk in chunks:
+            await ctx.send(chunk)
+        await ctx.respond("Done")
+    except Exception as e:
+        logger.error(e)
+        await ctx.respond("ERROR")
+
+
+@admin_cmds.command(description="confirm bulk add match")
+@discord.default_permissions(administrator=True)
+@discord.guild_only()
+async def reject(ctx: discord.ApplicationContext):
+    try:
+        BULK_STAGED.clear()
+        await ctx.respond("Done. Discarded bulk add match.")
     except Exception as e:
         logger.error(e)
         await ctx.respond("ERROR")
@@ -699,7 +814,7 @@ async def score(ctx: discord.ApplicationContext, playfab_or_user_name: str):
         embed.set_footer(text="Use /mh to check match history")
         await ctx.respond(embed=embed)
     except Exception as e:
-        print(e)
+        logger.error(e)
         await ctx.respond("ERROR")
 
 
