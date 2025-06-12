@@ -11,6 +11,9 @@ def set_points(team: list[MatchInputPlayer], win: bool):
     victory_distro = 600 if win else -300
     kdrs = [player.kdr for player in team]
     total_kd_ratio = sum(kdrs)
+    if total_kd_ratio == 0:
+        total_kd_ratio = 0.1
+
     kd_distro = [kdr / total_kd_ratio for kdr in kdrs]
     deviation = stdev(kd_distro)
     total_win_kd_pool = WIN_KD_POOL * (1 - deviation)

@@ -523,6 +523,7 @@ async def bulk_match(
 ):
     try:
         await ctx.defer()
+        BULK_STAGED.clear()
         textBytes = await file.read()
         textStr = textBytes.decode()
         matches = parse_matches(textStr)
