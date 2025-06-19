@@ -540,7 +540,7 @@ async def bulk_match(
                 # Split match data into separate fields for each team to avoid 1024 char limit
                 team1_txt = ""
                 team2_txt = ""
-                
+
                 for player in match.team_1:
                     BULK_STAGED.append(player)
                     team1_txt += (
@@ -548,7 +548,7 @@ async def bulk_match(
                         f"Score {player.score}; "
                         f"K {player.kills} | D {player.deaths} | {player.structure_damage}% DMG\n"
                     )
-                
+
                 for player in match.team_2:
                     BULK_STAGED.append(player)
                     team2_txt += (
@@ -556,17 +556,17 @@ async def bulk_match(
                         f"Score {player.score}; "
                         f"K {player.kills} | D {player.deaths} | {player.structure_damage}% DMG\n"
                     )
-                
+
                 # Add separate fields for each team to stay under Discord's 1024 char limit
                 page_embed.add_field(
                     name=f"Match {match.match_num} - Team 1 ({'WIN' if match.winning_team == 1 else 'LOSS'})",
                     value=team1_txt,
-                    inline=False
+                    inline=False,
                 )
                 page_embed.add_field(
                     name=f"Match {match.match_num} - Team 2 ({'WIN' if match.winning_team == 2 else 'LOSS'})",
                     value=team2_txt,
-                    inline=False
+                    inline=False,
                 )
             embeds.append(page_embed)
         paginator = Paginator(
@@ -691,25 +691,25 @@ async def backup(
             await ctx.respond("Unauthorized")
             return
         await ctx.defer()
-        
+
         # Create timestamp for backup filename
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         backup_filename = f"leaderboard_backup_{timestamp}.json"
         backup_path = f"./persist/{backup_filename}"
-        
+
         # Copy current leaderboard to backup file
         async with aiofiles.open(LeaderBoard.get_path(), "r") as source_file:
             content = await source_file.read()
-        
+
         async with aiofiles.open(backup_path, "w") as backup_file:
             await backup_file.write(content)
-        
+
         # Send the backup file to Discord
         await ctx.respond(
             f"✅ Backup created successfully!\n📁 **{backup_filename}**\n\n💾 **Backup saved on server** in `./persist/` directory\n📎 **File attached below** for your convenience",
-            file=discord.File(backup_path, backup_filename)
+            file=discord.File(backup_path, backup_filename),
         )
-        
+
     except Exception as e:
         logger.error(e)
         await ctx.respond("ERROR: Failed to create backup")
