@@ -5,6 +5,7 @@ cd /home/container || exit 1
 
 if [ -d "/home/container/dc-lb-lite" ]; then
 		echo "dc-lb-lite directory already exists, skipping clone."
+		git -C dc-lb-lite reset --hard HEAD
 		git -C dc-lb-lite pull --rebase --depth 1
 else
 		echo "Cloning dc-lb-lite repository..."
