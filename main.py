@@ -22,6 +22,7 @@ import io
 import json
 from datetime import datetime
 from common import logger
+from score_tracker.main import ScoreTracker
 
 logger.use_date_time_logger()
 
