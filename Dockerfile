@@ -1,11 +1,27 @@
 FROM python:3.11.3
 
-RUN adduser --disabled-password --home /home/container container
+WORKDIR /bot
 
-USER container
-ENV  USER=container HOME=/home/container
+COPY ./Pipfile .
 
-WORKDIR /home/container
+COPY ./.env* .
+     
+RUN pip install pipenv
 
-COPY        ./entrypoint.sh /entrypoint.sh
-CMD         [ "/bin/bash", "/entrypoint.sh" ]
+RUN pipenv install
+
+COPY ./parsers/ ./parsers/
+
+COPY ./models/ ./models/
+
+COPY ./common/ ./common/
+
+COPY ./rcon/ ./rcon/
+
+COPY ./score_tracker/ ./score_tracker/
+
+COPY ./main.py ./
+
+COPY ./compute/ ./compute/
+
+CMD ["pipenv", "run", "python", "main.py"]
