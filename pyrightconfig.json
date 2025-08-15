@@ -1,4 +1,12 @@
 {
 	"reportIncompatibleMethodOverride": false,
-	"reportUnusedExpression": false
+	"reportUnusedExpression": false,
+	"reportMissingParameterType": false,
+	"reportMissingTypeStubs": false,
+	"reportUnusedCallResult": false,
+	"reportUnannotatedClassAttribute": false,
+	"reportUnknownLambdaType": false,
+	"reportUnknownParameterType": false,
+	"reportUnknownVariableType": false,
+	"reportMissingSuperCall": false,
 }

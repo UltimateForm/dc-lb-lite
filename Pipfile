@@ -18,11 +18,11 @@ pygrok = "*"
 flake8 = "*"
 flake8-async = "*"
 faker = "*"
-pyright = "*"
+pyright = "v1.1.402"
 
 [scripts]
 lint = "flake8"
-typecheck = "pyright"
+typecheck = "pyright -p ."
 
 [requires]
 python_version = "3.11"

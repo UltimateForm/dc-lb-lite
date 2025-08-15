@@ -1,5 +1,6 @@
 import re
 import numpy as np
+import math
 from models.match_parse import MatchInput
 from parsers.grok import parse_match_input, parse_match_row
 from compute.score import set_points
@@ -58,6 +59,12 @@ def make_ordinal(n: int) -> str:
     else:
         suffix = ["th", "st", "nd", "rd", "th"][min(n % 10, 4)]
     return str(n) + suffix
+
+
+def rank_2_emoji(n: int) -> str:
+    rank_emoji_map = {0: ":first_place:", 1: ":second_place:", 2: ":third_place:"}
+    rank_out = rank_emoji_map.get(n, make_ordinal(n + 1))
+    return rank_out
 
 
 # source https://stackoverflow.com/questions/1094841/get-a-human-readable-version-of-a-file-size
@@ -120,3 +127,27 @@ def parse_matches(matche_str: str) -> list[MatchInput]:
     matches = re.split("^(?:\r?\n)", matche_str, flags=re.MULTILINE)
     matches_parsed = [parse_match(match) for match in matches]
     return list(match for match in matches_parsed if match is not None)
+
+
+def custom_format(number: float, precision: int):
+    if number == 0:
+        return "0"
+    elif number < 1:
+        return f"{number:.{precision}f}".rstrip("0").rstrip(".")
+    else:
+        integer_part = int(number)
+        decimal_part = number - integer_part
+        if decimal_part == 0:
+            return str(integer_part)
+        else:
+            return f"{integer_part}.{str(decimal_part)[2:precision+2]}"
+
+
+def human_format(number: int, min: int = 1000) -> str:
+    if number < min:
+        return str(number)
+    units = ["", "K", "M", "G", "T", "P"]
+    k = 1000.0
+    magnitude = int(math.floor(math.log(number, k)))
+    formatted_number = custom_format(number / k**magnitude, 1)
+    return "{}{}".format(formatted_number, units[magnitude])

@@ -45,7 +45,7 @@ class Player:
 
 
 @dataclass
-class LeaderBoard(IOBoundDataclass):
+class KovLeaderBoard(IOBoundDataclass):
     players: list[Player] = field(default_factory=list)
     max_items: int = 30
     rank_config: dict[str, str] = field(default_factory=dict)
@@ -86,3 +86,53 @@ class LeaderBoard(IOBoundDataclass):
                 None,
             )
         return player
+
+
+@dataclass
+class RbbPlayer:
+    playfab_id: str
+    name: str
+    kills: int = 0
+    place: int = 0
+    score: int = 0
+    wins: int = 0
+    deaths: int = 0
+
+
+@dataclass
+class RbbLeaderBoardCfg(IOBoundDataclass):
+    channels: list[int] = field(default_factory=list)
+    players: list[RbbPlayer] = field(default_factory=list)
+    max_items: int = 30
+
+    @classmethod
+    def get_path(cls) -> str:
+        return "./persist/rbb.leaderboard.json"
+
+    def get_player(self, playfab_or_user_name: str) -> RbbPlayer | None:
+        player: RbbPlayer | None = None
+        if is_playfab_id_format(playfab_or_user_name):
+            player = next(
+                (
+                    p
+                    for p in self.players
+                    if p.playfab_id == playfab_or_user_name.strip()
+                ),
+                None,
+            )
+        if player is None:
+            arg_trimmed_normal = playfab_or_user_name.strip().lower()
+            player = next(
+                (
+                    p
+                    for p in self.players
+                    if p.name.strip().lower() == arg_trimmed_normal
+                ),
+                None,
+            )
+        return player
+
+    def as_dict(self):
+        self_dict = self.__dict__.copy()
+        self_dict["players"] = list(player.__dict__.copy() for player in self.players)
+        return self_dict

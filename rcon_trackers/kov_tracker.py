@@ -2,20 +2,18 @@ from datetime import datetime, timezone
 from discord.ext import commands
 from discord.abc import Messageable
 from discord import Bot
-from rcon.rcon_listener import RconListener
 
-# from reactivex import Observable
 import asyncio
-from parsers.grok import parse_chat_event, parse_killfeed_event, parse_kov_add
+from parsers.grok import parse_kov_add
 from models.rcon import ChatEvent, KillfeedEvent, Player
 from common import logger
+from rcon_trackers.game_events import GameEventsTracker
 import re
 
 
-class ScoreTracker(commands.Cog):
+class KovTracker(commands.Cog):
     _channel_id: int
     _bot: Bot
-    _rcon_listener: RconListener
     _channel: Messageable
     _admin_id: str
     _tracking: dict[str, Player]
@@ -84,32 +82,25 @@ class ScoreTracker(commands.Cog):
             self._tracking = {}
             self._match_running = False
 
-    async def handle_rcon_event(self, ev: str):
-        # asyncio.create_task(self._channel.send(f"```{ev}```"))
-        if ev.lower().startswith("chat:"):
-            event = parse_chat_event(ev)
-            if event:
-                await self.handle_chat_event(event)
-            else:
-                logger.error(f"Failed to parse chat event {ev}")
-        elif ev.lower().startswith("killfeed:"):
-            event = parse_killfeed_event(ev)
-            if event:
-                await self.handle_killfeed_event(event)
-            else:
-                logger.error(f"Failed to parse killfeed event {ev}")
-        else:
-            logger.error(f"Unknown rcon event type: {ev}")
-
     async def on_ready_async(self):
         channel = self._bot.get_channel(self._channel_id)
-        if isinstance(channel, Messageable):
-            self._channel = channel
-            await self._channel.send("Connected, readying RCON events...")
-        self._rcon_listener = RconListener(["chat", "killfeed"])
+        if not isinstance(channel, Messageable):
+            raise ValueError(
+                f"Expected channel with ID {self._channel_id} to be a Messageable, but got {type(channel)}"
+            )
+        await channel.send("Will use this channel for KOV tracking events")
+        self._channel = channel
+        game_events_tracker = self._bot.get_cog(GameEventsTracker.__name__)
+        if not isinstance(game_events_tracker, GameEventsTracker):
+            raise ValueError(
+                f"Attempted to obtain game events tracker from cogs but received unexpected type {type(game_events_tracker)}"
+            )
 
-        def _handle(x: str):
-            asyncio.create_task(self.handle_rcon_event(x))
+        def handle_killfeed_event(x: KillfeedEvent):
+            asyncio.create_task(self.handle_killfeed_event(x))
 
-        self._rcon_listener.subscribe(_handle)
-        asyncio.create_task(self._rcon_listener.start())
+        def handle_chat_event(x: ChatEvent):
+            asyncio.create_task(self.handle_chat_event(x))
+
+        game_events_tracker.chat_events.subscribe(handle_chat_event)
+        game_events_tracker.killfeed_events.subscribe(handle_killfeed_event)
