@@ -6,8 +6,9 @@ from reactivex import Subject
 from common import logger
 from leaderboard.rbb import RbbLeaderboard
 from models.players import RbbLeaderBoardCfg, RbbPlayer
-from models.rcon import ChatEvent, KillfeedEvent
+from models.rcon import ChatEvent, KillfeedEvent, LoginEvent
 from discord.abc import Messageable
+from parsers.main import make_ordinal
 from rcon.rcon import RconContext
 from rcon_trackers.game_events import GameEventsTracker
 from table2ascii import table2ascii as t2a
@@ -40,6 +41,7 @@ class RbbTracker(commands.Cog):
     _current_champ: str | None
     _current_champ_username: str | None
     _player_name_map: dict[str, str]
+    _current_cfg: RbbLeaderBoardCfg | None = None
 
     def __init__(
         self,
@@ -64,33 +66,8 @@ class RbbTracker(commands.Cog):
         self._moderators = []
         self._player_name_map = dict()
         self._current_champ_username = None
-        # asyncio.create_task(self.read_current_champ())
-
-    # async def read_current_champ(self):
-    #     """
-    #     Reads the current champ id and username from the file at persist/champ and sets them to self._current_champ and self._current_champ_username.
-    #     """
-    #     try:
-    #         async with aopen("persist/champ", "r") as f:
-    #             lines = (await f.read()).splitlines()
-    #             self._current_champ = lines[0] if len(lines) > 0 else ""
-    #             self._current_champ_username = lines[1] if len(lines) > 1 else ""
-    #     except Exception as e:
-    #         logger.error(f"Error reading current champ: {e}")
-    #         self._current_champ = ""
-    #         self._current_champ_username = ""
-
-    # async def write_current_champ(self, champ_id: str, username: str):
-    #     """
-    #     Writes the given champ id and username to the file at persist/champ and sets them to self._current_champ and self._current_champ_username.
-    #     """
-
-    #     try:
-    #         async with aopen("persist/champ", "w") as f:
-    #             await f.write(f"{champ_id}\n{username}\n")
-
-    #     except Exception as e:
-    #         logger.error(f"Error writing current champ: {e}")
+        self._current_champ = None
+        self._current_cfg = None
 
     async def set_moderators(self):
         url = f"https://panel.academy-gaming.org/api/client/servers/{self._server_id}/files/contents?file=/Mordhau/Saved/PlayerFiles/Moderator_List.txt"
@@ -162,8 +139,27 @@ class RbbTracker(commands.Cog):
                 f"Adding {message.user_name} ({message.player_id}) to player name map"
             )
 
-        if normal_msg == ".rbbchamp":
-            logger.info(f"RBB CHAMP {self._current_champ_username}")
+
+        if normal_msg == ".myrbb" and self._current_cfg:
+            logger.info(
+                f"Received .myrbb command from {message.user_name} ({message.player_id})"
+            )
+            player = self._current_cfg.get_player(message.player_id)
+            if player is not None:
+                sorted_players = sorted(self._current_cfg.players, key=lambda p: p.score, reverse=True)
+                placement = next((i + 1 for i, p in enumerate(sorted_players) if p.playfab_id == player.playfab_id), None)
+                ordinal_placement = make_ordinal(placement or 0)
+                msg = (
+                    f"{message.user_name} ({player.score} points): Placed {ordinal_placement} | "
+                    f"{player.kills} fistings | "
+                    f"fisted {player.deaths} times | "
+                    f"{player.wins or 0} wins"
+                )
+                async with RconContext() as client:
+                    await client.execute(
+                        f"say {msg}"
+                    )
+
         if normal_msg == ".rbbchamp" and self._current_champ_username:
             async with RconContext() as client:
                 await client.execute(
@@ -196,14 +192,14 @@ class RbbTracker(commands.Cog):
                 await self.elliminate_player(message.player_id)
                 async with RconContext() as client:
                     await client.execute(
-                        f"say {current_player.name} has been elliminated from RBB for using banned commands"
+                        f"say {current_player.name} WAS ELIMINATED\nDON'T USE COMMANDS IN BAR BRAWLS!"
                     )
                     await client.execute(f"killplayer {message.player_id}")
             if re.match(TP_PATTERN, message.message):
                 await self.elliminate_player(message.player_id)
                 async with RconContext() as client:
                     await client.execute(
-                        f"say {current_player.name} has been elliminated from RBB for using tp commands"
+                        f"say {current_player.name} WAS ELIMINATED\nDON'T USE COMMANDS IN BAR BRAWLS!"
                     )
                     await client.execute(f"killplayer {message.player_id}")
 
@@ -251,7 +247,13 @@ class RbbTracker(commands.Cog):
 
             await self.check_win()
 
-    async def handle_rbb_match_over(self):
+    async def handle_login_event(self, event: LoginEvent):
+        if event.player_id in self._tracking:
+            if event.player_id not in self._player_name_map:
+                self._player_name_map[event.player_id] = event.user_name
+                await self.elliminate_player(event.player_id)
+
+    async def handle_rbb_match_over(self, winner: str):
         """
         Handles the end of an RBB match, calculates and displays player points.
         Scoring rules:
@@ -296,23 +298,24 @@ class RbbTracker(commands.Cog):
         current_time = round(datetime.now(timezone.utc).timestamp())
         time_sig = f"<t:{current_time}>"
         await self._channel.send(f"Match over{time_sig}\n```\n{table}\n```")
-        rbb_leaderboard = await RbbLeaderBoardCfg.aload()
+        self._current_cfg = await RbbLeaderBoardCfg.aload()
+        self._current_cfg._last_winner = winner
         for player in placed_players:
             player.score = get_points(player)
-            found_player = rbb_leaderboard.get_player(player.playfab_id)
+            found_player = self._current_cfg.get_player(player.playfab_id)
             if found_player is None:
-                rbb_leaderboard.players.append(player)
+                self._current_cfg.players.append(player)
             else:
                 found_player.kills += player.kills
                 found_player.score += player.score
                 found_player.deaths += player.deaths
                 found_player.wins += player.wins
 
-        await rbb_leaderboard.asave()
+        await self._current_cfg.asave()
         leaderboard = self._bot.get_cog(RbbLeaderboard.__name__)
         if isinstance(leaderboard, RbbLeaderboard):
             asyncio.create_task(
-                leaderboard.publish_leaderboards(rbb_leaderboard, False)
+                leaderboard.publish_leaderboards(self._current_cfg, False)
             )
 
     async def check_win(self):
@@ -322,11 +325,13 @@ class RbbTracker(commands.Cog):
             self._placed[last_player.playfab_id] = last_player
             last_player.place = current_tracking_length
             last_player.wins += 1
+            new_win = self._current_champ != last_player.playfab_id
             self._current_champ_username = last_player.name
+            self._current_champ = last_player.playfab_id
             logger.info("SET WINNER TO: " + self._current_champ_username)
-            await self.congratulate_winner(last_player)
+            await self.congratulate_winner(new_win, last_player)
 
-            await self.handle_rbb_match_over()
+            await self.handle_rbb_match_over(last_player.playfab_id)
 
     async def elliminate_player(self, player_id: str):
         if not self._match_running:
@@ -337,17 +342,22 @@ class RbbTracker(commands.Cog):
         current_player.place = len(self._tracking) + 1
         self._placed[current_player.playfab_id] = current_player
         await self._channel.send(
-            f"```{current_player.name} ({current_player.playfab_id}) has been elliminated```"
+            f"```{current_player.name} ({current_player.playfab_id}) has been eliminated```"
         )
         await self.check_win()
 
-    async def congratulate_winner(self, player: RbbPlayer):
+    async def congratulate_winner(self, new_win: bool, player: RbbPlayer):
         if not self._match_running:
             return
+        leaderboard_player = self._current_cfg.get_player(player.playfab_id) if self._current_cfg else None
+        current_wins = leaderboard_player.wins if leaderboard_player else 0
+        win_ordinal = make_ordinal(current_wins + 1)
+    
+        new_win_msg = f"{player.name or player.playfab_id} IS THE HARDEST BASTARD!!\nTHEY WIN THE BAR BRAWL!!!\nTHEIR {win_ordinal} WIN!\n"
+        renew_msg = f"{player.name or player.playfab_id} REMAINS UNDEFEATED!!!! YET AGAIN HE WINS THE BAR BRAWL!!!\nTHEIR {win_ordinal} WIN!\n"
+        msg = new_win_msg if new_win else renew_msg
         async with RconContext() as client:
-            await client.execute(
-                f"say {player.name or player.playfab_id} IS THE HARDEST BASTARD!!\nHE WINS THE BAR BRAWL!!!"
-            )
+            await client.execute(f"say {msg}")
 
         await self._channel.send(
             f"```{player.name} ({player.playfab_id}) is the last one standing!```"
@@ -394,11 +404,18 @@ class RbbTracker(commands.Cog):
                 await client.execute(
                     f"kick {hunter_id} Don't interfere with Bar Brawls"
                 )
+
+        if hunter_id in current_ids and victim_id in current_ids and victim_id == self._current_champ:
+            async with RconContext() as client:
+                await client.execute(
+                    f"say {ev.user_name} BEAT THE PREVIOUS CHAMPION!! {ev.killed_user_name}!!! WILL THEY BECOME THE NEXT?!"
+                )
+
         if victim_id not in current_ids:
             return
         asyncio.create_task(
             self._channel.send(
-                f"```{ev.user_name} ({ev.killer_id}) has elliminated {ev.killed_user_name} ({ev.killed_id})```"
+                f"```{ev.user_name} ({ev.killer_id}) has eliminated {ev.killed_user_name} ({ev.killed_id})```"
             )
         )
         current_hunter = self._tracking.get(hunter_id, None)
@@ -408,6 +425,10 @@ class RbbTracker(commands.Cog):
                 current_hunter.name = ev.user_name
             current_hunter.kills += 1
         current_victim.deaths += 1
+
+        if len(self._placed) == 0:
+            async with RconContext() as client:
+                await client.execute(f"say {ev.user_name} FISTED THE FIRST PLAYER")
         if not current_victim.name:
             current_victim.name = ev.killed_user_name
         current_tracking_length = len(self._tracking)
@@ -439,6 +460,14 @@ class RbbTracker(commands.Cog):
         def handle_chat_event(x: ChatEvent):
             asyncio.create_task(self.handle_chat_event(x))
 
+        def handle_login_event(x: LoginEvent):
+            if not self._match_running:
+                return
+            asyncio.create_task(self.handle_login_event(x))
+
         game_events_tracker.chat_events.subscribe(handle_chat_event)
         game_events_tracker.killfeed_events.subscribe(handle_killfeed_event)
+        game_events_tracker.login_events.subscribe(handle_login_event)
+        self._current_cfg = await RbbLeaderBoardCfg.aload()
+        self._current_champ = self._current_cfg._last_winner
         await self.set_admins()

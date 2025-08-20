@@ -104,6 +104,7 @@ class RbbLeaderBoardCfg(IOBoundDataclass):
     channels: list[int] = field(default_factory=list)
     players: list[RbbPlayer] = field(default_factory=list)
     max_items: int = 30
+    _last_winner: str | None = None
 
     @classmethod
     def get_path(cls) -> str:
