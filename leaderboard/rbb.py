@@ -84,7 +84,7 @@ class RbbLeaderboard(commands.Cog):
 
     def get_row(self, player_data: RbbPlayer):
         kills: int = player_data.kills
-        score = player_data.score
+        score = player_data.total_score
         return [
             player_data.name,
             score,
@@ -101,7 +101,7 @@ class RbbLeaderboard(commands.Cog):
         sort: bool = True,
     ):
         top_players = (
-            sorted(players, key=lambda x: x.score, reverse=True)
+            sorted(players, key=lambda x: x.total_score, reverse=True)
             if sort
             else list(players)
         )

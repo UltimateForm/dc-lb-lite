@@ -97,6 +97,30 @@ class RbbPlayer:
     score: int = 0
     wins: int = 0
     deaths: int = 0
+    claimed_bounties: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def total_bounty_score(self) -> int:
+        if not self.claimed_bounties or len(self.claimed_bounties) == 0:
+            return 0
+        return sum(self.claimed_bounties.values())
+
+    @property
+    def total_score(self) -> int:
+        return self.score + self.total_bounty_score
+
+    def claim_bounty(self, bounty_id: str, points: int):
+        if self.claimed_bounties is None:
+            self.claimed_bounties = dict()
+        if bounty_id in self.claimed_bounties:
+            self.claimed_bounties[bounty_id] += points
+        else:
+            self.claimed_bounties[bounty_id] = points
+
+@dataclass
+class RbbBounty:
+    points: int
+    claimable: int
 
 
 @dataclass
@@ -104,6 +128,7 @@ class RbbLeaderBoardCfg(IOBoundDataclass):
     channels: list[int] = field(default_factory=list)
     players: list[RbbPlayer] = field(default_factory=list)
     max_items: int = 30
+    bounties: dict[str, RbbBounty] = field(default_factory=dict)
     _last_winner: str | None = None
 
     @classmethod
@@ -136,4 +161,7 @@ class RbbLeaderBoardCfg(IOBoundDataclass):
     def as_dict(self):
         self_dict = self.__dict__.copy()
         self_dict["players"] = list(player.__dict__.copy() for player in self.players)
+        self_dict["bounties"] = {
+            k: v.__dict__.copy() for k, v in self.bounties.items()
+        }
         return self_dict
