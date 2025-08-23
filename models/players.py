@@ -129,8 +129,8 @@ class RbbLeaderBoardCfg(IOBoundDataclass):
     players: list[RbbPlayer] = field(default_factory=list)
     max_items: int = 30
     bounties: dict[str, RbbBounty] = field(default_factory=dict)
-    _last_winner: str | None = None
-
+    last_winner: str | None = None
+    win_streak: int = 0
     @classmethod
     def get_path(cls) -> str:
         return "./persist/rbb.leaderboard.json"

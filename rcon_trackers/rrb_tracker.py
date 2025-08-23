@@ -1,4 +1,5 @@
 import asyncio
+from hmac import new
 from discord.ext import commands
 from discord import Bot
 import aiohttp
@@ -38,11 +39,12 @@ class RbbTracker(commands.Cog):
     matches: Subject[list[RbbPlayer]]
     _moderators: list[str] = []
     _admins: set[str] = set()
-    _current_champ: str | None
+    # TODO: this is redundant (also in rbb leaderboard)
     _current_champ_username: str | None
     _player_name_map: dict[str, str]
     _current_cfg: RbbLeaderBoardCfg = RbbLeaderBoardCfg()
     _handlers: dict[str, asyncio.Task] = {}
+
     def __init__(
         self,
         bot: Bot,
@@ -66,7 +68,6 @@ class RbbTracker(commands.Cog):
         self._moderators = []
         self._player_name_map = dict()
         self._current_champ_username = None
-        self._current_champ = None
         self._current_cfg = RbbLeaderBoardCfg.load()
 
     async def set_moderators(self):
@@ -136,7 +137,9 @@ class RbbTracker(commands.Cog):
             logger.error(f"An error occurred: {e}")
             return None
 
-    async def broadcast_bounties(self, ids: list[str], heading: str = "RBB Bounties:\n"):
+    async def broadcast_bounties(
+        self, ids: list[str], heading: str = "RBB Bounties:\n"
+    ):
         if len(ids or []) == 0:
             logger.error("Can't broadcast bounties because player list empty")
             return
@@ -294,9 +297,7 @@ class RbbTracker(commands.Cog):
                 return
             bounty_target = comps[1]
             if not self._current_cfg:
-                logger.error(
-                    "Current RBB config is not loaded, cannot remove bounty."
-                )
+                logger.error("Current RBB config is not loaded, cannot remove bounty.")
                 return
             if bounty_target in self._current_cfg.bounties:
                 self._current_cfg.bounties.pop(bounty_target)
@@ -356,7 +357,7 @@ class RbbTracker(commands.Cog):
             self._player_name_map[event.player_id] = event.user_name
             await self.elliminate_player(event.player_id)
 
-    async def handle_rbb_match_over(self, winner: str):
+    async def handle_rbb_match_over(self):
         """
         Handles the end of an RBB match, calculates and displays player points.
         Scoring rules:
@@ -401,7 +402,6 @@ class RbbTracker(commands.Cog):
         current_time = round(datetime.now(timezone.utc).timestamp())
         time_sig = f"<t:{current_time}>"
         await self._channel.send(f"Match over{time_sig}\n```\n{table}\n```")
-        self._current_cfg._last_winner = winner
         for player in placed_players:
             player.score = get_points(player)
             found_player = self._current_cfg.get_player(player.playfab_id)
@@ -433,13 +433,18 @@ class RbbTracker(commands.Cog):
             self._placed[last_player.playfab_id] = last_player
             last_player.place = current_tracking_length
             last_player.wins += 1
-            new_win = self._current_champ != last_player.playfab_id
+            new_win = False
             self._current_champ_username = last_player.name
-            self._current_champ = last_player.playfab_id
+            if self._current_cfg.last_winner == last_player.playfab_id:
+                self._current_cfg.win_streak += 1
+            else:
+                new_win = True
+                self._current_cfg.win_streak = 1
+            self._current_cfg.last_winner = last_player.playfab_id
             logger.info("SET WINNER TO: " + self._current_champ_username)
             await self.congratulate_winner(new_win, last_player)
 
-            await self.handle_rbb_match_over(last_player.playfab_id)
+            await self.handle_rbb_match_over()
 
     async def elliminate_player(self, player_id: str):
         if not self._match_running:
@@ -520,7 +525,7 @@ class RbbTracker(commands.Cog):
         if (
             hunter_id in current_ids
             and victim_id in current_ids
-            and victim_id == self._current_champ
+            and victim_id == self._current_cfg.last_winner
         ):
             async with RconContext() as client:
                 await client.execute(
@@ -594,7 +599,6 @@ class RbbTracker(commands.Cog):
                 f"Attempted to obtain game events tracker from cogs but received unexpected type {type(game_events_tracker)}"
             )
 
-
         def handle_killfeed_event(x: KillfeedEvent):
             killfeed_handler = asyncio.create_task(self.handle_killfeed_event(x))
 
@@ -610,8 +614,12 @@ class RbbTracker(commands.Cog):
         game_events_tracker.killfeed_events.subscribe(handle_killfeed_event)
         game_events_tracker.login_events.subscribe(handle_login_event)
         self._current_cfg = await RbbLeaderBoardCfg.aload()
-        self._current_champ = self._current_cfg._last_winner
         self._player_name_map = {
             player.playfab_id: player.name for player in self._current_cfg.players
         }
+        self._current_champ_username = (
+            self._player_name_map.get(self._current_cfg.last_winner, None)
+            if self._current_cfg.last_winner
+            else None
+        )
         await self.set_admins()
