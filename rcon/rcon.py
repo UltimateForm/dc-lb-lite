@@ -3,11 +3,15 @@ import struct
 from contextlib import AbstractAsyncContextManager
 from common import logger
 import os
+import faker
+import time
 
 # Packet types
 SERVERDATA_AUTH = 3
 SERVERDATA_EXECCOMMAND = 2
 DEFAULT_RCON_CONNECT_TIMEOUT = 5
+
+fake = faker.Faker()
 
 
 # src: https://github.com/pmrowla/pysrcds/blob/master/srcds/rcon.py
@@ -55,16 +59,34 @@ class RconClient:
     _writer: asyncio.StreamWriter
     _counter: int
     _connect_timeout: int
+    _cmd_lock: asyncio.Lock
+    created: float
+    used: float
+    id: str
+
+    @property
+    def age(self):
+        return time.time() - self.created
+
+    @property
+    def age_since_used(self):
+        return time.time() - self.used
 
     def __init__(self) -> None:
         port = os.environ.get("RCON_PORT", "")
         if port is None or not port.isnumeric():
             raise ValueError("RCON_PORT environment variable not set as number")
         self._port = int(port)
-        self._connect_timeout = int(os.environ.get("RCON_CONNECT_TIMEOUT", DEFAULT_RCON_CONNECT_TIMEOUT))
+        self._connect_timeout = int(
+            os.environ.get("RCON_CONNECT_TIMEOUT", DEFAULT_RCON_CONNECT_TIMEOUT)
+        )
         self._password = os.environ.get("RCON_PASSWORD", "")
         self._address = os.environ.get("RCON_ADDRESS", "")
         self._counter = 0
+        self.id = fake.city().replace(" ", "_").lower()
+        self._cmd_lock = asyncio.Lock()
+        self.created = time.time()
+        self.used = self.created
 
     async def recv_pkt(self) -> RconPacket:
         """Read one RCON packet"""
@@ -87,10 +109,14 @@ class RconClient:
         return self._counter
 
     async def rewarm(self):
-        self._writer.write(
-            RconPacket(self.build_packet_id(), SERVERDATA_EXECCOMMAND, "alive").pack()
-        )
-        await self._writer.drain()
+        async with self._cmd_lock:
+            self._writer.write(
+                RconPacket(
+                    self.build_packet_id(), SERVERDATA_EXECCOMMAND, "alive"
+                ).pack()
+            )
+            self.used = time.time()
+            await self._writer.drain()
 
     async def get_connection(self):
         conn: tuple[asyncio.StreamReader, asyncio.StreamWriter]
@@ -113,15 +139,17 @@ class RconClient:
             )
 
     async def execute(self, command: str, msg_type: int = SERVERDATA_EXECCOMMAND):
-        pckt_id = self.build_packet_id()
-        self._writer.write(RconPacket(pckt_id, msg_type, command).pack())
-        await self._writer.drain()
-        response = await self.recv_pkt()
-        if response.pkt_id != pckt_id:
-            raise ValueError(
-                f"PACKET ID MISMATCH INPUT={pckt_id}; OUTPUT={response.pkt_id}"
-            )
-        return response.body
+        async with self._cmd_lock:
+            pckt_id = self.build_packet_id()
+            self._writer.write(RconPacket(pckt_id, msg_type, command).pack())
+            self.used = time.time()
+            await self._writer.drain()
+            response = await self.recv_pkt()
+            if response.pkt_id != pckt_id:
+                raise ValueError(
+                    f"PACKET ID MISMATCH INPUT={pckt_id}; OUTPUT={response.pkt_id}"
+                )
+            return response.body
 
 
 class RconContext(RconClient, AbstractAsyncContextManager):
