@@ -15,6 +15,7 @@ from rcon_trackers.game_events import GameEventsTracker
 from table2ascii import table2ascii as t2a
 from datetime import datetime, timezone
 import re
+import inflect
 
 TP_PATTERN = r"^(cc|c|L|R|up|d|dd|f|ff|fff|ffa|rr|ll)$"
 BANNED_PLAYER_COMMANDS = (
@@ -23,6 +24,13 @@ BANNED_PLAYER_COMMANDS = (
     + r"\.angelhat|\.domehat|\.goathat|\.bucket|\.doorshield|\.spoon|\.turdmaul|\.dlute|"
     + r"\.flower|\.lance|\.cross|\.bottle|\.rtp|\.givewp|\.vgivewp|\.vresize|\.pumpkin)"
 )
+
+KS_STREAK_MSGS = {
+    3: "{0} IS ON A 3 PLAYER KILLSTREAK!!",
+    5: "{0} IS UNSTOPPABLE!! 5 PLAYER KILL STREAK!!",
+    7: "{0} HAS BLOODY KNUCKLES!! 7 PLAYER KILL STREAK!!",
+    10: "{0} IS GODLIKE. 10 PLAYER KILL STREAK!!",
+}
 
 
 class RbbTracker(commands.Cog):
@@ -44,6 +52,7 @@ class RbbTracker(commands.Cog):
     _player_name_map: dict[str, str]
     _current_cfg: RbbLeaderBoardCfg = RbbLeaderBoardCfg()
     _handlers: dict[str, asyncio.Task] = {}
+    inflect_engine: inflect.engine
 
     def __init__(
         self,
@@ -69,6 +78,7 @@ class RbbTracker(commands.Cog):
         self._player_name_map = dict()
         self._current_champ_username = None
         self._current_cfg = RbbLeaderBoardCfg.load()
+        self.inflect_engine = inflect.engine()
 
     async def set_moderators(self):
         url = f"https://panel.academy-gaming.org/api/client/servers/{self._server_id}/files/contents?file=/Mordhau/Saved/PlayerFiles/Moderator_List.txt"
@@ -206,8 +216,7 @@ class RbbTracker(commands.Cog):
                 )
                 if player.claimed_bounties and len(player.claimed_bounties):
                     msg += f" | {player.total_bounty_score} points from bounties"
-                async with RconContext() as client:
-                    await client.execute(f"say {msg}")
+                _my_rbb_task = asyncio.create_task(self.say_rcon(msg))
 
         if normal_msg == ".rbbchamp" and self._current_champ_username:
             async with RconContext() as client:
@@ -215,12 +224,16 @@ class RbbTracker(commands.Cog):
                     f"say Current RBB champion is: {self._current_champ_username}"
                 )
 
-        if normal_msg == ".bounties" and self._current_cfg:
-            player_list = ""
-            async with RconContext() as client:
-                player_list = await client.execute("playerlist")
-            online_ids = re.findall(r"^([A-F0-9]*),", player_list, re.MULTILINE)
-            await self.broadcast_bounties(online_ids)
+        if normal_msg == ".b" and (message.player_id in self._tracking or message.player_id in self._admins):
+
+            async def func():
+                player_list = ""
+                async with RconContext() as client:
+                    player_list = await client.execute("playerlist")
+                online_ids = re.findall(r"^([A-F0-9]*),", player_list, re.MULTILINE)
+                await self.broadcast_bounties(online_ids)
+
+            _b_tsk = asyncio.create_task(func())
 
         if self._match_running:
             logger.info(
@@ -236,10 +249,9 @@ class RbbTracker(commands.Cog):
                 for player in self._tracking.values()
             ]
             joined_players = " | ".join(ingame_players)
-            async with RconContext() as client:
-                await client.execute(
-                    f"say Players left in current RBB match: {joined_players}"
-                )
+            _tsk_players_in_match = asyncio.create_task(
+                self.say_rcon(f"Players left in current RBB match: {joined_players}")
+            )
 
         if self._match_running and message.player_id in self._tracking.keys():
             current_player = self._tracking[message.player_id]
@@ -247,18 +259,22 @@ class RbbTracker(commands.Cog):
                 current_player.name = message.user_name
             if re.match(BANNED_PLAYER_COMMANDS, message.message):
                 await self.elliminate_player(message.player_id)
-                async with RconContext() as client:
-                    await client.execute(
-                        f"say {current_player.name} WAS ELIMINATED\nDON'T USE COMMANDS IN BAR BRAWLS!"
-                    )
-                    await client.execute(f"killplayer {message.player_id}")
+                async def punish_func(name:str):
+                    async with RconContext() as client:
+                        await client.execute(
+                            f"say {name} WAS ELIMINATED\nDON'T USE COMMANDS IN BAR BRAWLS!"
+                        )
+                        await client.execute(f"killplayer {message.player_id}")
+                _punish_task = asyncio.create_task(punish_func(current_player.name))
             if re.match(TP_PATTERN, message.message):
                 await self.elliminate_player(message.player_id)
-                async with RconContext() as client:
-                    await client.execute(
-                        f"say {current_player.name} WAS ELIMINATED\nDON'T USE COMMANDS IN BAR BRAWLS!"
-                    )
-                    await client.execute(f"killplayer {message.player_id}")
+                async def punish_tp_func(msg_ev: ChatEvent):
+                    async with RconContext() as client:
+                        await client.execute(
+                            f"say {msg_ev.user_name} WAS ELIMINATED\nDON'T USE COMMANDS IN BAR BRAWLS!"
+                        )
+                        await client.execute(f"killplayer {msg_ev.player_id}")
+                _punish_tp_task = asyncio.create_task(punish_tp_func(message))
 
         if message.player_id != self._admin_id:
             return
@@ -270,7 +286,7 @@ class RbbTracker(commands.Cog):
                     f"Invalid bounty command from {message.user_name} ({message.player_id}): {normal_msg}"
                 )
                 return
-            bounty_target = comps[1]
+            bounty_target = comps[1].upper()
             amount = comps[2]
             times = int(comps[3]) if len(comps) > 3 and comps[3].isnumeric() else 1
             if len(comps) > 3 and comps[3].isnumeric():
@@ -433,16 +449,14 @@ class RbbTracker(commands.Cog):
             self._placed[last_player.playfab_id] = last_player
             last_player.place = current_tracking_length
             last_player.wins += 1
-            new_win = False
             self._current_champ_username = last_player.name
             if self._current_cfg.last_winner == last_player.playfab_id:
                 self._current_cfg.win_streak += 1
             else:
-                new_win = True
                 self._current_cfg.win_streak = 1
             self._current_cfg.last_winner = last_player.playfab_id
             logger.info("SET WINNER TO: " + self._current_champ_username)
-            await self.congratulate_winner(new_win, last_player)
+            await self.congratulate_winner(last_player, self._current_cfg.win_streak)
 
             await self.handle_rbb_match_over()
 
@@ -459,7 +473,7 @@ class RbbTracker(commands.Cog):
         )
         await self.check_win()
 
-    async def congratulate_winner(self, new_win: bool, player: RbbPlayer):
+    async def congratulate_winner(self, player: RbbPlayer, streak: int = 1):
         if not self._match_running:
             return
         leaderboard_player = (
@@ -470,11 +484,22 @@ class RbbTracker(commands.Cog):
         current_wins = leaderboard_player.wins if leaderboard_player else 0
         win_ordinal = make_ordinal(current_wins + 1)
 
-        new_win_msg = f"{player.name or player.playfab_id} IS THE HARDEST BASTARD!!\nTHEY WIN THE BAR BRAWL!!!\nTHEIR {win_ordinal} WIN!\n"
-        renew_msg = f"{player.name or player.playfab_id} REMAINS UNDEFEATED!!!! YET AGAIN HE WINS THE BAR BRAWL!!!\nTHEIR {win_ordinal} WIN!\n"
-        msg = new_win_msg if new_win else renew_msg
-        async with RconContext() as client:
-            await client.execute(f"say {msg}")
+        streak_msgs = [
+            "{0} IS THE HARDEST BASTARD!!\nTHEY WIN THE BAR BRAWL!!!\nTHEIR {1} WIN!\n",
+            "{0} - TWO WINS IN A ROW!!\nANOTHER BAR BRAWLS DUB!!\nTHEIR {1} WIN!!",
+            "{0} {2} TIMES IN A ROW!!\nCAN ANYBODY BEAT THEM??\nTHEIR {1} WIN!!",
+        ]
+
+        msg = (
+            streak_msgs[min(streak - 1, len(streak_msgs) - 1)].format(
+                player.name,
+                win_ordinal,
+                self.inflect_engine.number_to_words(streak),  # type: ignore
+            )
+            if current_wins > 1
+            else f"{player.name} WON THEIR FIRST BAR BRAWL!!\nIT WON'T BE THE LAST!!"
+        )
+        win_broadcast = asyncio.create_task(self.say_rcon(msg))
 
         await self._channel.send(
             f"```{player.name} ({player.playfab_id}) is the last one standing!```"
@@ -486,6 +511,16 @@ class RbbTracker(commands.Cog):
                 f"say {name} IS THE HARDEST BASTARD\nHE WINS THE BAR BRAWL"
             )
             await client.execute(f"killplayer {id}")
+
+    async def handle_killstreak(self, name: str, kills: int):
+        if kills < 3:
+            return
+        if kills not in KS_STREAK_MSGS:
+            return
+        msg = KS_STREAK_MSGS[kills].format(name)
+        logger.info(f"Broadcasting killstreak message: {msg}")
+        async with RconContext() as client:
+            await client.execute(f"say {msg}")
 
     async def handle_killfeed_event(self, ev: KillfeedEvent):
 
@@ -516,7 +551,7 @@ class RbbTracker(commands.Cog):
         ):
             async with RconContext() as client:
                 await client.execute(
-                    f"say {ev.killed_user_name} was killed by someone outside the ring... cringe\n{ev.user_name} will be kicked for it."
+                    f"say MODS, BAN THIS GUY. BLOW UP HIS FUCKING HOUSE\n{ev.user_name} JUST KILLED {ev.killed_user_name} FROM OUTSIDE THE RING."
                 )
                 await client.execute(
                     f"kick {hunter_id} Don't interfere with Bar Brawls"
@@ -545,6 +580,10 @@ class RbbTracker(commands.Cog):
             if not current_hunter.name:
                 current_hunter.name = ev.user_name
             current_hunter.kills += 1
+            if current_hunter.kills >= 3 and current_hunter.kills in KS_STREAK_MSGS:
+                _ks_task = asyncio.create_task(
+                    self.handle_killstreak(current_hunter.name, current_hunter.kills)
+                )
             if current_victim.playfab_id in self._current_cfg.bounties:
                 bounty = self._current_cfg.bounties[current_victim.playfab_id]
                 current_hunter.claimed_bounties[current_victim.playfab_id] = (
