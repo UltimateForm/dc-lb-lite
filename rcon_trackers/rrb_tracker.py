@@ -47,7 +47,6 @@ class RbbTracker(commands.Cog):
     matches: Subject[list[RbbPlayer]]
     _moderators: list[str] = []
     _admins: set[str] = set()
-    # TODO: this is redundant (also in rbb leaderboard)
     _current_champ_username: str | None
     _player_name_map: dict[str, str]
     _current_cfg: RbbLeaderBoardCfg = RbbLeaderBoardCfg()
@@ -83,6 +82,9 @@ class RbbTracker(commands.Cog):
         self.inflect_engine = inflect.engine()
         self.rcon_pool = RconConnectionPool(3)
         self.background_tasks = set()
+
+    def get_name(self, player_id: str) -> str:
+        return self._player_name_map.get(player_id, player_id)
 
     async def set_moderators(self):
         url = f"https://panel.academy-gaming.org/api/client/servers/{self._server_id}/files/contents?file=/Mordhau/Saved/PlayerFiles/Moderator_List.txt"
@@ -367,7 +369,7 @@ class RbbTracker(commands.Cog):
             )
             self.backtask(asyncio.create_task(
                 self.say_rcon(
-                    f"Bounty set for {self._player_name_map.get(bounty_target)}"
+                    f"{amount} Pts x {times} bounty set for {self.get_name(bounty_target)}"
                 )
             ))
             await self._current_cfg.asave()
@@ -379,15 +381,12 @@ class RbbTracker(commands.Cog):
                     f"Invalid removebounty command from {message.user_name} ({message.player_id}): {normal_msg}"
                 )
                 return
-            bounty_target = comps[1]
-            if not self._current_cfg:
-                logger.error("Current RBB config is not loaded, cannot remove bounty.")
-                return
+            bounty_target = comps[1].upper()
             if bounty_target in self._current_cfg.bounties:
                 self._current_cfg.bounties.pop(bounty_target)
                 self.backtask(asyncio.create_task(
                     self.say_rcon(
-                        f"Bounty removed for {self._player_name_map.get(bounty_target)}"
+                        f"Bounty removed for {self.get_name(bounty_target)}"
                     )
                 ))
                 await self._current_cfg.asave()
@@ -400,7 +399,7 @@ class RbbTracker(commands.Cog):
             if player_ids:
                 self._match_running = True
                 self._tracking = {
-                    id: RbbPlayer(id, self._player_name_map.get(id, ""))
+                    id: RbbPlayer(id, self.get_name(id))
                     for id in player_ids
                 }
                 logger.debug(f"Players to track: {self._tracking.keys()}")
@@ -464,7 +463,7 @@ class RbbTracker(commands.Cog):
             body=[
                 [
                     player.place,
-                    player.name or self._player_name_map.get(player.playfab_id, None),
+                    player.name or self.get_name(player.playfab_id),
                     get_points(player),
                     player.kills,
                 ]
@@ -484,7 +483,7 @@ class RbbTracker(commands.Cog):
                 found_player.score += player.score
                 found_player.deaths += player.deaths
                 found_player.wins += player.wins
-                new_name = self._player_name_map.get(found_player.playfab_id)
+                new_name = self.get_name(found_player.playfab_id)
                 if new_name:
                     found_player.name = new_name
                 for bounty_id, bounty_points in player.claimed_bounties.items():
