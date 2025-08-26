@@ -13,11 +13,13 @@ table2ascii = "*"
 dacite = "*"
 numpy = "*"
 pygrok = "*"
+inflect = "*"
+dotenv = "*"
+faker = "*"
 
 [dev-packages]
 flake8 = "*"
 flake8-async = "*"
-faker = "*"
 pyright = "v1.1.402"
 
 [scripts]
@@ -26,4 +28,3 @@ typecheck = "pyright -p ."
 
 [requires]
 python_version = "3.11"
-

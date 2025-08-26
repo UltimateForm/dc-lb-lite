@@ -137,19 +137,33 @@ class RconClient:
             raise ValueError(
                 f"AUTHENTICATION FAILURE, MISMATCHING PKT ID INPUT={pkt_id}; OUTPUT={auth_response.pkt_id}"
             )
+        self.used = time.time()
 
     async def execute(self, command: str, msg_type: int = SERVERDATA_EXECCOMMAND):
+        command_key = command.split(" ", 1)[0]
+        logger.info(f"{self.id} executing command: {command_key}")
         async with self._cmd_lock:
-            pckt_id = self.build_packet_id()
-            self._writer.write(RconPacket(pckt_id, msg_type, command).pack())
-            self.used = time.time()
-            await self._writer.drain()
-            response = await self.recv_pkt()
-            if response.pkt_id != pckt_id:
-                raise ValueError(
-                    f"PACKET ID MISMATCH INPUT={pckt_id}; OUTPUT={response.pkt_id}"
-                )
-            return response.body
+            async with asyncio.timeout(10):
+                pckt_id = self.build_packet_id()
+                self._writer.write(RconPacket(pckt_id, msg_type, command).pack())
+                self.used = time.time()
+                await self._writer.drain()
+                response = await self.recv_pkt()
+                logger.info(f"{self.id} executed command: {command_key}")
+                if response.pkt_id != pckt_id:
+                    raise ValueError(
+                        f"PACKET ID MISMATCH INPUT={pckt_id}; OUTPUT={response.pkt_id}"
+                    )
+                return response.body
+
+    async def close(self):
+        try:
+            async with self._cmd_lock:
+                self._writer.close()
+                async with asyncio.timeout(10):
+                    await self._writer.wait_closed()
+        except Exception as e:
+            logger.error(f"Error while closing RCON client {self.id}: {e}")
 
 
 class RconContext(RconClient, AbstractAsyncContextManager):

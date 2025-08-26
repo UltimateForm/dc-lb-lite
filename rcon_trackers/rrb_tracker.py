@@ -139,6 +139,9 @@ class RbbTracker(commands.Cog):
                 await client.execute(command=f"say {chunk}")
         except Exception as e:
             logger.error(f"Failed to run say cmd: {e}")
+            if client:
+                logger.info(f"Expiring client {client.id} since it errored out")
+                client.used = 120
         finally:
             if not existing_client and client:
                 await self.rcon_pool.release_client(client)
@@ -169,6 +172,9 @@ class RbbTracker(commands.Cog):
             await self.broadcast_bounties(online_ids, existing_client=client)
         except Exception as e:
             logger.error(f"Failed to run b command: {e}")
+            if client:
+                logger.info(f"Expiring client {client.id} since it errored out")
+                client.used = 120
         finally:
             if client:
                 await self.rcon_pool.release_client(client)
@@ -180,7 +186,6 @@ class RbbTracker(commands.Cog):
             logger.debug(f"Background task added; total: {len(self.background_tasks)}")
         except Exception as e:
             logger.error(f"Background task failed: {e}")
-
 
     async def broadcast_bounties(
         self,
@@ -237,6 +242,9 @@ class RbbTracker(commands.Cog):
                 await self.elliminate_player(player.playfab_id)
         except Exception as e:
             logger.error(f"Failed to run rbbend cmd: {e}")
+            if client:
+                logger.info(f"Expiring client {client.id} since it errored out")
+                client.used = 120
         finally:
             if client:
                 await self.rcon_pool.release_client(client)
@@ -301,9 +309,13 @@ class RbbTracker(commands.Cog):
                 for player in self._tracking.values()
             ]
             joined_players = " | ".join(ingame_players)
-            self.backtask(asyncio.create_task(
-                self.say_rcon(f"Players left in current RBB match: {joined_players}")
-            ))
+            self.backtask(
+                asyncio.create_task(
+                    self.say_rcon(
+                        f"Players left in current RBB match: {joined_players}"
+                    )
+                )
+            )
 
         if self._match_running and message.player_id in self._tracking.keys():
             current_player = self._tracking[message.player_id]
@@ -322,6 +334,11 @@ class RbbTracker(commands.Cog):
                         await client.execute(f"killplayer {message.player_id}")
                     except Exception as e:
                         logger.error(f"Failed to punish ffaer: {e}")
+                        if client:
+                            logger.info(
+                                f"Expiring client {client.id} since it errored out"
+                            )
+                            client.used = 120
                     finally:
                         if client:
                             await self.rcon_pool.release_client(client)
@@ -340,6 +357,11 @@ class RbbTracker(commands.Cog):
                         await client.execute(f"killplayer {msg_ev.player_id}")
                     except Exception as e:
                         logger.error(f"Failed to punish TPer: {e}")
+                        if client:
+                            logger.info(
+                                f"Expiring client {client.id} since it errored out"
+                            )
+                            client.used = 120
                     finally:
                         if client:
                             await self.rcon_pool.release_client(client)
@@ -367,11 +389,13 @@ class RbbTracker(commands.Cog):
             self._current_cfg.bounties[bounty_target] = RbbBounty(
                 int(amount), int(times)
             )
-            self.backtask(asyncio.create_task(
-                self.say_rcon(
-                    f"{amount} Pts x {times} bounty set for {self.get_name(bounty_target)}"
+            self.backtask(
+                asyncio.create_task(
+                    self.say_rcon(
+                        f"{amount} Pts x {times} bounty set for {self.get_name(bounty_target)}"
+                    )
                 )
-            ))
+            )
             await self._current_cfg.asave()
 
         if normal_msg.startswith(".rmbounty"):
@@ -384,11 +408,13 @@ class RbbTracker(commands.Cog):
             bounty_target = comps[1].upper()
             if bounty_target in self._current_cfg.bounties:
                 self._current_cfg.bounties.pop(bounty_target)
-                self.backtask(asyncio.create_task(
-                    self.say_rcon(
-                        f"Bounty removed for {self.get_name(bounty_target)}"
+                self.backtask(
+                    asyncio.create_task(
+                        self.say_rcon(
+                            f"Bounty removed for {self.get_name(bounty_target)}"
+                        )
                     )
-                ))
+                )
                 await self._current_cfg.asave()
 
         if normal_msg == ".rbb lock":
@@ -399,18 +425,17 @@ class RbbTracker(commands.Cog):
             if player_ids:
                 self._match_running = True
                 self._tracking = {
-                    id: RbbPlayer(id, self.get_name(id))
-                    for id in player_ids
+                    id: RbbPlayer(id, self.get_name(id)) for id in player_ids
                 }
                 logger.debug(f"Players to track: {self._tracking.keys()}")
                 self._placed = {}
                 joined_playfab_ids = " | ".join(player_ids)
+
                 async def this_brawl_bounties(ids: list[str]):
                     await asyncio.sleep(7)
                     await self.broadcast_bounties(ids, "THIS BRAWL'S BOUNTIES:\n")
-                self.backtask(asyncio.create_task(
-                    this_brawl_bounties(player_ids)
-                ))
+
+                self.backtask(asyncio.create_task(this_brawl_bounties(player_ids)))
                 await self._channel.send(
                     f"PlayfabIds received from server txt:\n```\n{joined_playfab_ids}\n```"
                 )
@@ -492,9 +517,11 @@ class RbbTracker(commands.Cog):
         await self._current_cfg.asave()
         leaderboard = self._bot.get_cog(RbbLeaderboard.__name__)
         if isinstance(leaderboard, RbbLeaderboard):
-            self.backtask(asyncio.create_task(
-                leaderboard.publish_leaderboards(self._current_cfg, False)
-            ))
+            self.backtask(
+                asyncio.create_task(
+                    leaderboard.publish_leaderboards(self._current_cfg, False)
+                )
+            )
 
     async def check_win(self):
         current_tracking_length = len(self._tracking)
@@ -569,7 +596,12 @@ class RbbTracker(commands.Cog):
             )
             await client.execute(f"kick {id} Don't interfere with Bar Brawls")
         except Exception as e:
-            logger.error(f"Failed to run rbbend cmd: {e}")
+            logger.error(f"Failed to run punish_ffaer: {e}")
+            if client:
+                logger.info(
+                    f"Expiring client {client.id} since it errored out"
+                )
+                client.used = 120
         finally:
             if client:
                 await self.rcon_pool.release_client(client)
@@ -598,9 +630,6 @@ class RbbTracker(commands.Cog):
 
         if not self._match_running:
             return
-        logger.info(
-            f"{ev.user_name} ({ev.killer_id}) has killed {ev.killed_user_name} ({ev.killed_id})"
-        )
         hunter_id = ev.killer_id
         victim_id = ev.killed_id
         current_ids = self._tracking.keys()
@@ -671,9 +700,11 @@ class RbbTracker(commands.Cog):
         current_victim.deaths += 1
 
         if len(self._placed) == 0:
-            self.backtask(asyncio.create_task(
-                self.say_rcon(f"{ev.user_name} FISTED THE FIRST PLAYER")
-            ))
+            self.backtask(
+                asyncio.create_task(
+                    self.say_rcon(f"{ev.user_name} FISTED THE FIRST PLAYER")
+                )
+            )
         if not current_victim.name:
             current_victim.name = ev.killed_user_name
         current_tracking_length = len(self._tracking)
