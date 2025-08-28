@@ -13,6 +13,7 @@ class GameEventsTracker(commands.Cog):
     chat_events: Observable = empty()
     killfeed_events: Observable = empty()
     login_events: Observable = empty()
+    _background_task: asyncio.Task | None = None
 
     def __init__(self, bot: Bot, channel_id: int):
         self._bot = bot
@@ -44,4 +45,4 @@ class GameEventsTracker(commands.Cog):
         if isinstance(channel, Messageable):
             await channel.send("Connected, readying RCON events...")
 
-        asyncio.create_task(self._listener.start())
+        self._background_task = asyncio.create_task(self._listener.start())

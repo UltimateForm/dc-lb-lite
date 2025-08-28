@@ -54,6 +54,7 @@ class RbbTracker(commands.Cog):
     inflect_engine: inflect.engine
     rcon_pool: RconConnectionPool
     background_tasks: set[asyncio.Task]
+    _debug_mode: bool = False
 
     def __init__(
         self,
@@ -187,6 +188,49 @@ class RbbTracker(commands.Cog):
         except Exception as e:
             logger.error(f"Background task failed: {e}")
 
+    async def explain_bounty(self, id: str, user_name: str):
+        player_bounties = self._current_cfg.bounties.get(id, None)
+        if not player_bounties:
+            return
+        static_pts = player_bounties.static_points
+        static_claimed = player_bounties.static_claimable
+        components = [f"manually set: {static_pts} x {static_claimed}"] if static_pts else []
+        other_sources = set(b.source for b in player_bounties.timed_bounties) if player_bounties.timed_bounties else set()
+        for source in other_sources:
+            source_bounties = [b for b in player_bounties.timed_bounties if b.source == source]
+            source_pts = sum(b.points for b in source_bounties)
+            source_claimed = sum(b.claimable for b in source_bounties)
+            components.append(f"{source}: {source_pts} x {source_claimed}")
+        all_comps = " | ".join(components)
+        await self.say_rcon(
+            f"{user_name} has a total bounty of {player_bounties.points} points (claimable 7 times)\n{all_comps}"
+        )
+
+    async def start_match(self, player_ids: list[str], debug: bool = False):
+        if debug:
+            await self._current_cfg.asave()
+            self._debug_mode = True
+            await self.say_rcon("DEBUG BRAWL STARTING")
+        self._match_running = True
+        self._tracking = {
+            id: RbbPlayer(id, self.get_name(id)) for id in player_ids
+        }
+        logger.debug(f"Players to track: {self._tracking.keys()}")
+        self._placed = {}
+        joined_playfab_ids = " | ".join(player_ids)
+
+        async def this_brawl_bounties(ids: list[str]):
+            if not debug:
+                await asyncio.sleep(7)
+            await self.broadcast_bounties(ids, "THIS BRAWL'S BOUNTIES:\n")
+
+        self.backtask(asyncio.create_task(this_brawl_bounties(player_ids)))
+
+        debug_sig = "[DEBUG] " if self._debug_mode else ""
+        await self._channel.send(
+            f"{debug_sig}PlayfabIds in this brawl:\n```\n{joined_playfab_ids}\n```"
+        )
+
     async def broadcast_bounties(
         self,
         ids: list[str],
@@ -257,6 +301,21 @@ class RbbTracker(commands.Cog):
             logger.debug(
                 f"Adding {message.user_name} ({message.player_id}) to player name map"
             )
+
+        if normal_msg == ".myb":
+            player_bounties = self._current_cfg.bounties.get(message.player_id, None)
+            if player_bounties:
+                self.backtask(
+                    asyncio.create_task(self.explain_bounty(message.player_id, message.user_name))
+                )
+            else:
+                self.backtask(
+                    asyncio.create_task(
+                        self.say_rcon(
+                            f"You have no bounties placed on you {message.user_name}... yet..."
+                        )
+                    )
+                )
 
         if normal_msg == ".myrbb" and self._current_cfg:
             logger.debug(
@@ -368,10 +427,26 @@ class RbbTracker(commands.Cog):
 
                 self.backtask(asyncio.create_task(punish_tp_func(message)))
 
+
+        if normal_msg.startswith(".dbg") and message.player_id in [self._admin_id, "D1247A0B618D12E"]:
+            logger.info(f"Debug mode toggled (from {message.user_name}({message.player_id}))")
+            ids = list(id.upper() for id in normal_msg.split(" ")[1:])
+            ids.append(message.player_id)
+            if not ids or len(ids) < 2:
+                logger.error(f"Invalid .dbg command from {message.user_name} ({message.player_id}): {normal_msg}")
+                return
+            await self.start_match(ids, True)
+
+
+
         if message.player_id != self._admin_id:
             return
 
+
         if normal_msg.startswith(".bounty"):
+            if self._debug_mode:
+                self.backtask(asyncio.create_task(self.say_rcon("can't add bounties in debug mode")))
+                return
             comps = normal_msg.split(" ")
             if len(comps) < 3:
                 logger.error(
@@ -386,19 +461,33 @@ class RbbTracker(commands.Cog):
             if not self._current_cfg:
                 logger.error("Current RBB config is not loaded, cannot set bounty.")
                 return
-            self._current_cfg.bounties[bounty_target] = RbbBounty(
-                int(amount), int(times)
-            )
-            self.backtask(
-                asyncio.create_task(
-                    self.say_rcon(
-                        f"{amount} Pts x {times} bounty set for {self.get_name(bounty_target)}"
+            existing_bounty = self._current_cfg.bounties.get(bounty_target, None)
+            if existing_bounty:
+                existing_bounty.add_static_bounty(int(amount), int(times))
+                self.backtask(
+                    asyncio.create_task(
+                        self.say_rcon(
+                            f"{amount} Pts x {times} bounty added for {self.get_name(bounty_target)}. Total: {existing_bounty.points} Pts x {existing_bounty.claimable}"
+                        )
                     )
                 )
-            )
+            else:
+                self._current_cfg.bounties[bounty_target] = RbbBounty(
+                    int(amount), int(times)
+                )
+                self.backtask(
+                    asyncio.create_task(
+                        self.say_rcon(
+                            f"{amount} Pts x {times} bounty set for {self.get_name(bounty_target)}"
+                        )
+                    )
+                )
             await self._current_cfg.asave()
 
         if normal_msg.startswith(".rmbounty"):
+            if self._debug_mode:
+                self.backtask(asyncio.create_task(self.say_rcon("can't remove bounties in debug mode")))
+                return
             comps = normal_msg.split(" ")
             if len(comps) < 2:
                 logger.error(
@@ -422,23 +511,9 @@ class RbbTracker(commands.Cog):
                 f"rbb lock message received (from {message.user_name}({message.player_id})) and validated!"
             )
             player_ids = await self.get_rbb_brawl_content()
+            self._current_cfg.auto_top_10_bounties()
             if player_ids:
-                self._match_running = True
-                self._tracking = {
-                    id: RbbPlayer(id, self.get_name(id)) for id in player_ids
-                }
-                logger.debug(f"Players to track: {self._tracking.keys()}")
-                self._placed = {}
-                joined_playfab_ids = " | ".join(player_ids)
-
-                async def this_brawl_bounties(ids: list[str]):
-                    await asyncio.sleep(7)
-                    await self.broadcast_bounties(ids, "THIS BRAWL'S BOUNTIES:\n")
-
-                self.backtask(asyncio.create_task(this_brawl_bounties(player_ids)))
-                await self._channel.send(
-                    f"PlayfabIds received from server txt:\n```\n{joined_playfab_ids}\n```"
-                )
+                await self.start_match(player_ids)
 
         if normal_msg == "rbbend":
             logger.info(
@@ -454,22 +529,6 @@ class RbbTracker(commands.Cog):
             await self.elliminate_player(event.player_id)
 
     async def handle_rbb_match_over(self):
-        """
-        Handles the end of an RBB match, calculates and displays player points.
-        Scoring rules:
-            - 1 kill = 1 point
-            - 1 death = -3 points (and you're out)
-            - Placement points:
-                6th place = 4 points
-                5th place = 5 points
-                4th place = 6 points
-                3rd place = 7 points
-                2nd place = 8 points
-                1st place = 10 points
-        Updates internal state to mark the match as not running, computes points for each player
-        based on kills, deaths, and placement, and generates a summary table.
-        """
-
         self._match_running = False
 
         def get_points(player: RbbPlayer):
@@ -497,7 +556,8 @@ class RbbTracker(commands.Cog):
         )
         current_time = round(datetime.now(timezone.utc).timestamp())
         time_sig = f"<t:{current_time}>"
-        await self._channel.send(f"Match over{time_sig}\n```\n{table}\n```")
+        debug_sig = "[DEBUG] " if self._debug_mode else ""
+        await self._channel.send(f"{debug_sig}Match over{time_sig}\n```\n{table}\n```")
         for player in placed_players:
             player.score = get_points(player)
             found_player = self._current_cfg.get_player(player.playfab_id)
@@ -513,7 +573,13 @@ class RbbTracker(commands.Cog):
                     found_player.name = new_name
                 for bounty_id, bounty_points in player.claimed_bounties.items():
                     found_player.claim_bounty(bounty_id, bounty_points)
+                    logger.info(f"MATCH OVER SUM: {found_player.name} receive bounty {bounty_id} of {bounty_points} points")
 
+        if self._debug_mode:
+            self._debug_mode = False
+            self._current_cfg = await RbbLeaderBoardCfg.aload()
+            await self.say_rcon("DEBUG BRAWL ENDED")
+            return
         await self._current_cfg.asave()
         leaderboard = self._bot.get_cog(RbbLeaderboard.__name__)
         if isinstance(leaderboard, RbbLeaderboard):
@@ -550,8 +616,9 @@ class RbbTracker(commands.Cog):
         current_player = self._tracking.pop(player_id)
         current_player.place = len(self._tracking) + 1
         self._placed[current_player.playfab_id] = current_player
+        debug_sig = "[DEBUG] " if self._debug_mode else ""
         await self._channel.send(
-            f"```{current_player.name} ({current_player.playfab_id}) has been eliminated```"
+            f"```{debug_sig}{current_player.name} ({current_player.playfab_id}) has been eliminated```"
         )
         await self.check_win()
 
@@ -578,13 +645,13 @@ class RbbTracker(commands.Cog):
                 win_ordinal,
                 self.inflect_engine.number_to_words(streak),  # type: ignore
             )
-            if current_wins > 1
+            if current_wins >= 1
             else f"{player.name} WON THEIR FIRST BAR BRAWL!!\nIT WON'T BE THE LAST!!"
         )
         self.backtask(asyncio.create_task(self.say_rcon(msg)))
-
+        debug_sig = "[DEBUG] " if self._debug_mode else ""
         await self._channel.send(
-            f"```{player.name} ({player.playfab_id}) is the last one standing!```"
+            f"```{debug_sig}{player.name} ({player.playfab_id}) is the last one standing!```"
         )
 
     async def punish_ffaer(self, name: str, id: str, victim: str):
@@ -594,13 +661,12 @@ class RbbTracker(commands.Cog):
             await client.execute(
                 f"say MODS, BAN THIS GUY. BLOW UP HIS FUCKING HOUSE\n{name} JUST KILLED {victim} FROM OUTSIDE THE RING."
             )
-            await client.execute(f"kick {id} Don't interfere with Bar Brawls")
+            if not self._debug_mode:
+                await client.execute(f"kick {id} Don't interfere with Bar Brawls")
         except Exception as e:
             logger.error(f"Failed to run punish_ffaer: {e}")
             if client:
-                logger.info(
-                    f"Expiring client {client.id} since it errored out"
-                )
+                logger.info(f"Expiring client {client.id} since it errored out")
                 client.used = 120
         finally:
             if client:
@@ -646,15 +712,16 @@ class RbbTracker(commands.Cog):
             and victim_id == self._current_cfg.last_winner
         ):
             await self.say_rcon(
-                f"say {ev.user_name} BEAT THE PREVIOUS CHAMPION!! {ev.killed_user_name}!!! WILL THEY BECOME THE NEXT?!"
+                f"{ev.user_name} BEAT THE PREVIOUS CHAMPION!! {ev.killed_user_name}!!! WILL THEY BECOME THE NEXT?!"
             )
 
         if victim_id not in current_ids:
             return
+        debug_sig = "[DEBUG] " if self._debug_mode else ""
         self.backtask(
             asyncio.create_task(
                 self._channel.send(
-                    f"```{ev.user_name} ({ev.killer_id}) has eliminated {ev.killed_user_name} ({ev.killed_id})```"
+                    f"```{debug_sig}{ev.user_name} ({ev.killer_id}) has eliminated {ev.killed_user_name} ({ev.killed_id})```"
                 )
             )
         )
@@ -673,26 +740,13 @@ class RbbTracker(commands.Cog):
                     )
                 )
             if current_victim.playfab_id in self._current_cfg.bounties:
-                bounty = self._current_cfg.bounties[current_victim.playfab_id]
-                current_hunter.claimed_bounties[current_victim.playfab_id] = (
-                    bounty.points
+                claimed_points = self._current_cfg.claim_bounty(
+                    current_hunter, current_victim.playfab_id
                 )
-                bounty.claimable -= 1
-                if bounty.claimable <= 0:
-                    logger.info(
-                        f"Bounty on {current_victim.name} ({current_victim.playfab_id}) claimed out, removing bounty."
-                    )
-                    removed_bounty = self._current_cfg.bounties.pop(
-                        current_victim.playfab_id, None
-                    )
-                    if not removed_bounty:
-                        logger.error(
-                            f"Tried removing bounty for {current_victim.name} ({current_victim.playfab_id}) but none was removed.. why?"
-                        )
                 self.backtask(
                     asyncio.create_task(
                         self.say_rcon(
-                            f"{current_hunter.name} HAS CLAIMED A BOUNTY OF {bounty.points} POINTS FOR FISTING {current_victim.name}"
+                            f"{current_hunter.name} HAS CLAIMED A BOUNTY OF {claimed_points} POINTS FOR FISTING {current_victim.name}"
                         )
                     )
                 )
@@ -745,6 +799,7 @@ class RbbTracker(commands.Cog):
         game_events_tracker.killfeed_events.subscribe(handle_killfeed_event)
         game_events_tracker.login_events.subscribe(handle_login_event)
         self._current_cfg = await RbbLeaderBoardCfg.aload()
+        self._current_cfg.auto_top_10_bounties()
         self._player_name_map = {
             player.playfab_id: player.name for player in self._current_cfg.players
         }
