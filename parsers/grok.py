@@ -19,7 +19,6 @@ GROK_PLAYERLIST_ROW = (
     r"%{NOTSPACE:player_id}, %{GREEDYDATA:user_name}, %{GREEDYDATA}, %{GREEDYDATA}"
 )
 GROK_MATCHSTATE = r"MatchState: %{GREEDYDATA:state}"
-GROK_KOV_ADD = r".kov %{NOTSPACE:team} add %{NOTSPACE:id}"
 GROK_MATCH_HEAD = r"MATCH %{NUMBER:match_num} - TEAM %{NUMBER:winning_team} WINS"
 GROK_MATCH_ROW = r"%{GREEDYDATA:user_name}\s+\(%{NOTSPACE:playfab_id}\)\s+-\s+%{NUMBER:structure_damage}%\s+DMG\s+-\s+K\s+%{NUMBER:kills}\s+\|\s+D\s+%{NUMBER:deaths}"
 
@@ -64,13 +63,6 @@ def parse_server_info(raw: str) -> ServerInfo | None:
     if not success or not parsed:
         return None
     return ServerInfo(**parsed)
-
-
-def parse_kov_add(raw: str) -> Player | None:
-    (success, parsed) = parse_event(raw, GROK_KOV_ADD)
-    if not success or not parsed:
-        return None
-    return Player(player_id=parsed.get("id", ""), user_name="", kills=0, deaths=0)
 
 
 def parse_matchstate(raw: str) -> str | None:
