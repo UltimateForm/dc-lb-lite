@@ -32,7 +32,6 @@ KS_STREAK_MSGS = {
     10: "{0} IS GODLIKE. 10 PLAYER KILL STREAK!!",
 }
 
-
 class RbbTracker(commands.Cog):
     _admin_id: str
     _api_token: str
@@ -195,9 +194,9 @@ class RbbTracker(commands.Cog):
         static_pts = player_bounties.static_points
         static_claimed = player_bounties.static_claimable
         components = [f"manually set: {static_pts} x {static_claimed}"] if static_pts else []
-        other_sources = set(b.source for b in player_bounties.timed_bounties) if player_bounties.timed_bounties else set()
+        other_sources = set(b.source for b in player_bounties.dynamic_bounties) if player_bounties.dynamic_bounties else set()
         for source in other_sources:
-            source_bounties = [b for b in player_bounties.timed_bounties if b.source == source]
+            source_bounties = [b for b in player_bounties.dynamic_bounties if b.source == source]
             source_pts = sum(b.points for b in source_bounties)
             source_claimed = sum(b.claimable for b in source_bounties)
             components.append(f"{source}: {source_pts} x {source_claimed}")
@@ -511,6 +510,7 @@ class RbbTracker(commands.Cog):
                 f"rbb lock message received (from {message.user_name}({message.player_id})) and validated!"
             )
             player_ids = await self.get_rbb_brawl_content()
+            self._current_cfg.tick_bounties()
             self._current_cfg.auto_top_10_bounties()
             if player_ids:
                 await self.start_match(player_ids)
@@ -571,6 +571,8 @@ class RbbTracker(commands.Cog):
                 new_name = self.get_name(found_player.playfab_id)
                 if new_name:
                     found_player.name = new_name
+                if self._current_cfg.is_elligible_for_ks_bounty(player.kills):
+                    self._current_cfg.add_ks_bounty(found_player, player.kills)
                 for bounty_id, bounty_points in player.claimed_bounties.items():
                     found_player.claim_bounty(bounty_id, bounty_points)
                     logger.info(f"MATCH OVER SUM: {found_player.name} receive bounty {bounty_id} of {bounty_points} points")
@@ -799,6 +801,7 @@ class RbbTracker(commands.Cog):
         game_events_tracker.killfeed_events.subscribe(handle_killfeed_event)
         game_events_tracker.login_events.subscribe(handle_login_event)
         self._current_cfg = await RbbLeaderBoardCfg.aload()
+        self._current_cfg.tick_bounties()
         self._current_cfg.auto_top_10_bounties()
         self._player_name_map = {
             player.playfab_id: player.name for player in self._current_cfg.players

@@ -3,7 +3,7 @@ import os
 from dotenv import load_dotenv
 from leaderboard.rbb import RbbLeaderboard
 from common import logger
-from rcon_trackers.rrb_tracker import RbbTracker
+from rcon_trackers.rbb_tracker import RbbTracker
 from rcon_trackers.game_events import GameEventsTracker
 
 logger.use_date_time_logger()
