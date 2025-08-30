@@ -3,6 +3,7 @@ import numpy as np
 from models.match_parse import MatchInput
 from parsers.grok import parse_match_input, parse_match_row
 from compute.score import set_points
+from common import logger
 
 
 def is_playfab_id_format(arg: str):
@@ -93,7 +94,7 @@ def parse_match(match_txt: str) -> MatchInput | None:
         return None
     match_board = head_and_rest[1]
     matched_teams = re.match(
-        r"^(TEAM [12](?:(?:\n|\r).*)*)(TEAM [12](?:(?:\n|\r).*)*)$",
+        r"^(TEAM [12](?:(?:\n|\r).*)*)?(TEAM [12](?:(?:\n|\r).*)*)$",
         match_board,
         re.MULTILINE | re.IGNORECASE,
     )
@@ -101,6 +102,9 @@ def parse_match(match_txt: str) -> MatchInput | None:
         return None
     team_blocks = matched_teams.groups()[:2]
     for block in team_blocks:
+        if block is None or not block.strip():
+            logger.warning(f"Empty team block found in match data, skipping {block!r}")
+            continue
         split_with_head = block.split("\n", 1)
         [head, rows] = split_with_head
         head = head.strip()

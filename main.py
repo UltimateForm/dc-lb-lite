@@ -104,7 +104,7 @@ class Leaderboard(commands.Cog):
         except Exception as e:
             logger.error(f"Failed to delete previous msg {msg_id}. {e}")
 
-    async def delete_previous_messages(self) -> str | None:
+    async def delete_previous_messages(self):
         if self.channel is None:
             return
         try:
@@ -132,7 +132,7 @@ class Leaderboard(commands.Cog):
     def get_row(self, player_data: Player, ranks: dict[str, str]):
         kills: int = player_data.total_kills
         deaths: int = player_data.total_deaths
-        score = player_data.total_score
+        score = max(player_data.total_score, 0)
         (_, rank_txt) = compute_gate_text(
             score, dict([(str(k), v) for (k, v) in ranks.items()])
         )
@@ -181,9 +181,7 @@ class Leaderboard(commands.Cog):
             return
         if force_rewrite:
             self._messages = []
-        leaderboard_data = existing_leaderboard
-        if not leaderboard_data:
-            leaderboard_data = await LeaderBoard.aload()
+        leaderboard_data: LeaderBoard = existing_leaderboard if existing_leaderboard else await LeaderBoard.aload()
         all_table = self.get_table(
             leaderboard_data.players,
             leaderboard_data.aliased_ranks(),
@@ -458,6 +456,8 @@ def push_match(
         else:
             return (None, False)
     proper_score = score if not new_player else score + 2000
+    if proper_score < 0 and player.total_score < 750:
+        proper_score = 0
     match_data = GameMatch(kills, deaths, structure_damage_percent, proper_score)
     player.matches.append(match_data)
     return (player, new_player)
@@ -540,7 +540,12 @@ async def bulk_match(
                 # Split match data into separate fields for each team to avoid 1024 char limit
                 team1_txt = ""
                 team2_txt = ""
-
+                if match.team_1 is None:
+                    team1_txt = "No players in Team 1"
+                    match.team_1 = []
+                if match.team_2 is None:
+                    team2_txt = "No players in Team 2"
+                    match.team_2 = []
                 for player in match.team_1:
                     BULK_STAGED.append(player)
                     team1_txt += (
