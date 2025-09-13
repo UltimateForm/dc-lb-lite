@@ -32,6 +32,7 @@ KS_STREAK_MSGS = {
     10: "{0} IS GODLIKE. 10 PLAYER KILL STREAK!!",
 }
 
+
 class RbbTracker(commands.Cog):
     _admin_id: str
     _api_token: str
@@ -68,6 +69,7 @@ class RbbTracker(commands.Cog):
         self._admin_id = admin_id
         self._api_token = api_token
         self._server_id = server_id
+        logger.info(f"Using server id {server_id}")
         self._file_path = file_path
         self._channel_id = channel_id
         self._tracking = dict()
@@ -152,7 +154,9 @@ class RbbTracker(commands.Cog):
 
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers) as response:
+                async with session.get(
+                    url, headers=headers, timeout=aiohttp.ClientTimeout(30)
+                ) as response:
                     if response.status != 200:
                         logger.error(f"PTERO BAD HTTP CODE: {response.status}")
                         return None
@@ -161,6 +165,9 @@ class RbbTracker(commands.Cog):
                     return player_ids
         except aiohttp.ClientError as e:
             logger.error(f"An error occurred: {e}")
+            return None
+        except asyncio.TimeoutError as e:
+            logger.error(f"Request to PTERO timed out {e}")
             return None
 
     async def handle_b_command(self, message: ChatEvent):
@@ -193,10 +200,18 @@ class RbbTracker(commands.Cog):
             return
         static_pts = player_bounties.static_points
         static_claimed = player_bounties.static_claimable
-        components = [f"manually set: {static_pts} x {static_claimed}"] if static_pts else []
-        other_sources = set(b.source for b in player_bounties.dynamic_bounties) if player_bounties.dynamic_bounties else set()
+        components = (
+            [f"manually set: {static_pts} x {static_claimed}"] if static_pts else []
+        )
+        other_sources = (
+            set(b.source for b in player_bounties.dynamic_bounties)
+            if player_bounties.dynamic_bounties
+            else set()
+        )
         for source in other_sources:
-            source_bounties = [b for b in player_bounties.dynamic_bounties if b.source == source]
+            source_bounties = [
+                b for b in player_bounties.dynamic_bounties if b.source == source
+            ]
             source_pts = sum(b.points for b in source_bounties)
             source_claimed = sum(b.claimable for b in source_bounties)
             components.append(f"{source}: {source_pts} x {source_claimed}")
@@ -211,9 +226,7 @@ class RbbTracker(commands.Cog):
             self._debug_mode = True
             await self.say_rcon("DEBUG BRAWL STARTING")
         self._match_running = True
-        self._tracking = {
-            id: RbbPlayer(id, self.get_name(id)) for id in player_ids
-        }
+        self._tracking = {id: RbbPlayer(id, self.get_name(id)) for id in player_ids}
         logger.debug(f"Players to track: {self._tracking.keys()}")
         self._placed = {}
         joined_playfab_ids = " | ".join(player_ids)
@@ -305,7 +318,9 @@ class RbbTracker(commands.Cog):
             player_bounties = self._current_cfg.bounties.get(message.player_id, None)
             if player_bounties:
                 self.backtask(
-                    asyncio.create_task(self.explain_bounty(message.player_id, message.user_name))
+                    asyncio.create_task(
+                        self.explain_bounty(message.player_id, message.user_name)
+                    )
                 )
             else:
                 self.backtask(
@@ -361,7 +376,7 @@ class RbbTracker(commands.Cog):
             ingame_players = [
                 (
                     player.name
-                    or self._player_name_map.get(player.playfab_id, None)
+                    or self._player_name_map.get(player.playfab_id, "")
                     or player.playfab_id
                 )
                 for player in self._tracking.values()
@@ -426,25 +441,32 @@ class RbbTracker(commands.Cog):
 
                 self.backtask(asyncio.create_task(punish_tp_func(message)))
 
-
-        if normal_msg.startswith(".dbg") and message.player_id in [self._admin_id, "D1247A0B618D12E"]:
-            logger.info(f"Debug mode toggled (from {message.user_name}({message.player_id}))")
+        if normal_msg.startswith(".dbg") and message.player_id in [
+            self._admin_id,
+            "D1247A0B618D12E",
+        ]:
+            logger.info(
+                f"Debug mode toggled (from {message.user_name}({message.player_id}))"
+            )
             ids = list(id.upper() for id in normal_msg.split(" ")[1:])
             ids.append(message.player_id)
             if not ids or len(ids) < 2:
-                logger.error(f"Invalid .dbg command from {message.user_name} ({message.player_id}): {normal_msg}")
+                logger.error(
+                    f"Invalid .dbg command from {message.user_name} ({message.player_id}): {normal_msg}"
+                )
                 return
             await self.start_match(ids, True)
-
-
 
         if message.player_id != self._admin_id:
             return
 
-
         if normal_msg.startswith(".bounty"):
             if self._debug_mode:
-                self.backtask(asyncio.create_task(self.say_rcon("can't add bounties in debug mode")))
+                self.backtask(
+                    asyncio.create_task(
+                        self.say_rcon("can't add bounties in debug mode")
+                    )
+                )
                 return
             comps = normal_msg.split(" ")
             if len(comps) < 3:
@@ -485,7 +507,11 @@ class RbbTracker(commands.Cog):
 
         if normal_msg.startswith(".rmbounty"):
             if self._debug_mode:
-                self.backtask(asyncio.create_task(self.say_rcon("can't remove bounties in debug mode")))
+                self.backtask(
+                    asyncio.create_task(
+                        self.say_rcon("can't remove bounties in debug mode")
+                    )
+                )
                 return
             comps = normal_msg.split(" ")
             if len(comps) < 2:
@@ -495,17 +521,30 @@ class RbbTracker(commands.Cog):
                 return
             bounty_target = comps[1].upper()
             if bounty_target in self._current_cfg.bounties:
-                self._current_cfg.bounties.pop(bounty_target)
+                bounty = self._current_cfg.bounties.get(bounty_target, None)
+                if not bounty:
+                    return
+                bounty.static_claimable = 0
+                bounty.static_points = 0
+                if bounty.exhausted:
+                    self._current_cfg.bounties.pop(bounty_target)
                 self.backtask(
                     asyncio.create_task(
                         self.say_rcon(
-                            f"Bounty removed for {self.get_name(bounty_target)}"
+                            f"Manual bounties removed for {self.get_name(bounty_target)}"
                         )
                     )
                 )
                 await self._current_cfg.asave()
 
         if normal_msg == ".rbb lock":
+            self.backtask(
+                asyncio.create_task(
+                    self._channel.send(
+                        f"RBB lock command received, retrieving {self._file_path} ..."
+                    )
+                )
+            )
             logger.info(
                 f"rbb lock message received (from {message.user_name}({message.player_id})) and validated!"
             )
@@ -514,6 +553,12 @@ class RbbTracker(commands.Cog):
             self._current_cfg.auto_top_10_bounties()
             if player_ids:
                 await self.start_match(player_ids)
+            else:
+                self.backtask(
+                    asyncio.create_task(
+                        self._channel.send("No player ids from server, can't start match")
+                    )
+                )
 
         if normal_msg == "rbbend":
             logger.info(
@@ -543,13 +588,14 @@ class RbbTracker(commands.Cog):
             self._placed.values(), key=lambda p: p.kills, reverse=True
         )
         table = t2a(
-            header=["#", "Name", "Points", "K"],
+            header=["#", "Name", "Points", "K", "B"],
             body=[
                 [
                     player.place,
-                    player.name or self.get_name(player.playfab_id),
-                    get_points(player),
+                    player.name,
+                    get_points(player) + player.total_bounty_score,
                     player.kills,
+                    player.total_bounty_score,
                 ]
                 for player in placed_players
             ],
@@ -558,7 +604,7 @@ class RbbTracker(commands.Cog):
         time_sig = f"<t:{current_time}>"
         debug_sig = "[DEBUG] " if self._debug_mode else ""
         await self._channel.send(f"{debug_sig}Match over{time_sig}\n```\n{table}\n```")
-        for player in placed_players:
+        for index, player in enumerate(placed_players):
             player.score = get_points(player)
             found_player = self._current_cfg.get_player(player.playfab_id)
             if found_player is None:
@@ -573,9 +619,13 @@ class RbbTracker(commands.Cog):
                     found_player.name = new_name
                 if self._current_cfg.is_elligible_for_ks_bounty(player.kills):
                     self._current_cfg.add_ks_bounty(found_player, player.kills)
+                if index <= 2:
+                    self._current_cfg.add_most_kills_bounty(found_player, index + 1)
                 for bounty_id, bounty_points in player.claimed_bounties.items():
                     found_player.claim_bounty(bounty_id, bounty_points)
-                    logger.info(f"MATCH OVER SUM: {found_player.name} receive bounty {bounty_id} of {bounty_points} points")
+                    logger.info(
+                        f"MATCH OVER SUM: {found_player.name} receive bounty {bounty_id} of {bounty_points} points"
+                    )
 
         if self._debug_mode:
             self._debug_mode = False
@@ -720,15 +770,10 @@ class RbbTracker(commands.Cog):
         if victim_id not in current_ids:
             return
         debug_sig = "[DEBUG] " if self._debug_mode else ""
-        self.backtask(
-            asyncio.create_task(
-                self._channel.send(
-                    f"```{debug_sig}{ev.user_name} ({ev.killer_id}) has eliminated {ev.killed_user_name} ({ev.killed_id})```"
-                )
-            )
-        )
+
         current_hunter = self._tracking.get(hunter_id, None)
         current_victim = self._tracking.pop(victim_id)
+        claimed_points = 0
         if current_hunter:
             if not current_hunter.name:
                 current_hunter.name = ev.user_name
@@ -752,7 +797,9 @@ class RbbTracker(commands.Cog):
                         )
                     )
                 )
-
+        dc_bt_msg = f"(claimed {claimed_points} pts bounty)" if claimed_points else ""
+        dc_msg = f"```{debug_sig}{ev.user_name} ({ev.killer_id}) has eliminated {ev.killed_user_name} ({ev.killed_id}) {dc_bt_msg}```"
+        self.backtask(asyncio.create_task(self._channel.send(dc_msg)))
         current_victim.deaths += 1
 
         if len(self._placed) == 0:

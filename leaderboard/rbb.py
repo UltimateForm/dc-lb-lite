@@ -46,7 +46,7 @@ class RbbLeaderboard(commands.Cog):
 
     async def delete_previous_messages(
         self, channel: discord.TextChannel
-    ) -> str | None:
+    ):
         file_path = f"{self._file_path}_{channel.id}"
         try:
             file_exists = await aos.path.exists(file_path)
@@ -140,7 +140,6 @@ class RbbLeaderboard(commands.Cog):
                 messages.append(msg)
         if len(msgs_to_drop):
             for msg in msgs_to_drop:
-                logger.info(f"Dropping msg {msg.id}")
                 messages.remove(msg)
                 asyncio.create_task(msg.delete())
             rewrite = True

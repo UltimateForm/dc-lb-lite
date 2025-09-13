@@ -30,18 +30,18 @@ class RconConnectionPool:
                     return client
         # if we're here it means we couldnt create new client
         if self._pool.empty():
-            logger.info("All clients busy, waiting...")
+            logger.debug("All clients busy, waiting...")
         client = await self._pool.get()
         logger.debug(f"Polled client {client.id} from pool")
         while client is not None and client.age_since_used > 60:
-            logger.info(f"Client {client.id} stale, dropping...")
+            logger.debug(f"Client {client.id} stale, dropping...")
             await client.close()
             client = None
             if not self._pool.empty():
                 client = await self._pool.get()
                 logger.debug(f"Polled freshier client {client.id} from pool")
         if client is None:
-            logger.info("No fresh clients available, recursing...")
+            logger.debug("No fresh clients available, recursing...")
             return await self.get_client()
         async with self._lock:
             self._in_use.add(client)
