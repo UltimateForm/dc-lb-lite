@@ -8,7 +8,7 @@ from leaderboard.rbb import RbbLeaderboard
 from models.players import RbbBounty, RbbLeaderBoardCfg, RbbPlayer
 from models.rcon import ChatEvent, KillfeedEvent, LoginEvent
 from discord.abc import Messageable
-from parsers.main import make_ordinal, split_chunks
+from parsers.main import make_ordinal, split_chunks, get_playfab_ids_from_player_list
 from rcon.rcon import RconClient
 from rcon.rcon_pool import RconConnectionPool
 from rcon_trackers.game_events import GameEventsTracker
@@ -170,12 +170,38 @@ class RbbTracker(commands.Cog):
             logger.error(f"Request to PTERO timed out {e}")
             return None
 
+    async def cull_offline_players(self, existing_client: RconClient | None = None):
+        client: RconClient | None = existing_client
+        try:
+            client = await self.rcon_pool.get_client() if client is None else client
+            player_list = await client.execute("playerlist")
+            logger.info(f"Playerlist: {player_list}")
+            online_ids = get_playfab_ids_from_player_list(player_list)
+            logger.info(f"Online IDs: {online_ids}")
+            logger.info(f"Tracking IDs: {self._tracking.keys()}")
+            players_to_cull = [
+                id for id in self._tracking.keys() if id not in online_ids
+            ]
+            logger.info(f"Players to cull: {players_to_cull}")
+            # for id in players_to_cull:
+            #     await self.elliminate_player(id, "offline")
+        except Exception as e:
+            logger.error(f"Failed to run playerlist cmd in cull_offline_players(): {e}")
+            if client and not existing_client:
+                logger.info(f"Expiring client {client.id} since it errored out")
+                client.used = 120
+            else:
+                raise e
+        finally:
+            if client and not existing_client:
+                await self.rcon_pool.release_client(client)
+
     async def handle_b_command(self, message: ChatEvent):
         client: RconClient | None = None
         try:
             client = await self.rcon_pool.get_client()
             player_list = await client.execute("playerlist")
-            online_ids = re.findall(r"^([A-F0-9]*),", player_list, re.MULTILINE)
+            online_ids = get_playfab_ids_from_player_list(player_list)
             await self.broadcast_bounties(online_ids, existing_client=client)
         except Exception as e:
             logger.error(f"Failed to run b command: {e}")
@@ -242,6 +268,7 @@ class RbbTracker(commands.Cog):
         await self._channel.send(
             f"{debug_sig}PlayfabIds in this brawl:\n```\n{joined_playfab_ids}\n```"
         )
+        await self.cull_offline_players()
 
     async def broadcast_bounties(
         self,
@@ -295,7 +322,7 @@ class RbbTracker(commands.Cog):
                     logger.error(
                         f"Error killing {player.name}({player.playfab_id}): {e}"
                     )
-                await self.elliminate_player(player.playfab_id)
+                await self.elliminate_player(player.playfab_id, "rbbend")
         except Exception as e:
             logger.error(f"Failed to run rbbend cmd: {e}")
             if client:
@@ -385,7 +412,7 @@ class RbbTracker(commands.Cog):
             self.backtask(
                 asyncio.create_task(
                     self.say_rcon(
-                        f"Players left in current RBB match: {joined_players}"
+                        f"{len(ingame_players)} PLAYERS LEFT IN THE BRAWL: {joined_players}"
                     )
                 )
             )
@@ -395,7 +422,7 @@ class RbbTracker(commands.Cog):
             if current_player.name != message.user_name:
                 current_player.name = message.user_name
             if re.match(BANNED_PLAYER_COMMANDS, message.message):
-                await self.elliminate_player(message.player_id)
+                await self.elliminate_player(message.player_id, "banned command")
 
                 async def punish_func(name: str):
                     client: RconClient | None = None
@@ -418,7 +445,7 @@ class RbbTracker(commands.Cog):
 
                 self.backtask(asyncio.create_task(punish_func(current_player.name)))
             if re.match(TP_PATTERN, message.message):
-                await self.elliminate_player(message.player_id)
+                await self.elliminate_player(message.player_id, "tp command")
 
                 async def punish_tp_func(msg_ev: ChatEvent):
                     client: RconClient | None = None
@@ -556,7 +583,9 @@ class RbbTracker(commands.Cog):
             else:
                 self.backtask(
                     asyncio.create_task(
-                        self._channel.send("No player ids from server, can't start match")
+                        self._channel.send(
+                            "No player ids from server, can't start match"
+                        )
                     )
                 )
 
@@ -571,7 +600,7 @@ class RbbTracker(commands.Cog):
     async def handle_login_event(self, event: LoginEvent):
         if event.player_id in self._tracking:
             self._player_name_map[event.player_id] = event.user_name
-            await self.elliminate_player(event.player_id)
+            await self.elliminate_player(event.player_id, "logged out during match")
 
     async def handle_rbb_match_over(self):
         self._match_running = False
@@ -603,7 +632,7 @@ class RbbTracker(commands.Cog):
         current_time = round(datetime.now(timezone.utc).timestamp())
         time_sig = f"<t:{current_time}>"
         debug_sig = "[DEBUG] " if self._debug_mode else ""
-        await self._channel.send(f"{debug_sig}Match over{time_sig}\n```\n{table}\n```")
+        await self._channel.send(f"{debug_sig}Match over{time_sig}\n```\n{table}\n```"[:2000])
         for index, player in enumerate(placed_players):
             player.score = get_points(player)
             found_player = self._current_cfg.get_player(player.playfab_id)
@@ -660,7 +689,7 @@ class RbbTracker(commands.Cog):
 
             await self.handle_rbb_match_over()
 
-    async def elliminate_player(self, player_id: str):
+    async def elliminate_player(self, player_id: str, reason: str | None = None):
         if not self._match_running:
             return
         if player_id not in self._tracking.keys():
@@ -669,8 +698,9 @@ class RbbTracker(commands.Cog):
         current_player.place = len(self._tracking) + 1
         self._placed[current_player.playfab_id] = current_player
         debug_sig = "[DEBUG] " if self._debug_mode else ""
+        reason_msg = f" (Reason: {reason})" if reason else ""
         await self._channel.send(
-            f"```{debug_sig}{current_player.name} ({current_player.playfab_id}) has been eliminated```"
+            f"```{debug_sig}{current_player.name} ({current_player.playfab_id}) has been eliminated{reason_msg}```"
         )
         await self.check_win()
 
@@ -773,10 +803,10 @@ class RbbTracker(commands.Cog):
 
         current_hunter = self._tracking.get(hunter_id, None)
         current_victim = self._tracking.pop(victim_id)
+        current_victim.name = ev.killed_user_name
         claimed_points = 0
         if current_hunter:
-            if not current_hunter.name:
-                current_hunter.name = ev.user_name
+            current_hunter.name = ev.user_name
             current_hunter.kills += 1
             if current_hunter.kills >= 3 and current_hunter.kills in KS_STREAK_MSGS:
                 self.backtask(
@@ -801,7 +831,6 @@ class RbbTracker(commands.Cog):
         dc_msg = f"```{debug_sig}{ev.user_name} ({ev.killer_id}) has eliminated {ev.killed_user_name} ({ev.killed_id}) {dc_bt_msg}```"
         self.backtask(asyncio.create_task(self._channel.send(dc_msg)))
         current_victim.deaths += 1
-
         if len(self._placed) == 0:
             self.backtask(
                 asyncio.create_task(

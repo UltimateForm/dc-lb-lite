@@ -151,3 +151,8 @@ def human_format(number: int, min: int = 1000) -> str:
     magnitude = int(math.floor(math.log(number, k)))
     formatted_number = custom_format(number / k**magnitude, 1)
     return "{}{}".format(formatted_number, units[magnitude])
+
+
+def get_playfab_ids_from_player_list(list_raw: str) -> list[str]:
+    online_ids = re.findall(r"^([A-F0-9]*),", list_raw, re.MULTILINE)
+    return online_ids
