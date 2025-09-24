@@ -5,7 +5,7 @@ WORKDIR /bot
 COPY ./Pipfile .
 
 COPY ./.env* .
-     
+
 RUN pip install pipenv
 
 RUN pipenv install
@@ -24,4 +24,4 @@ COPY ./main.py ./
 
 COPY ./compute/ ./compute/
 
-CMD ["pipenv", "run", "python", "main.py"]
+CMD ["pipenv", "run", "python", "-u", "main.py"]
