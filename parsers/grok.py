@@ -1,12 +1,10 @@
 from datetime import datetime
 from pygrok import Grok
-import re
 from models.match_parse import MatchInput, MatchInputPlayer
 from models.rcon import (
     ChatEvent,
     KillfeedEvent,
     LoginEvent,
-    Player,
     ServerInfo,
 )
 
@@ -70,10 +68,6 @@ def parse_matchstate(raw: str) -> str | None:
     if not success or not parsed:
         return None
     return parsed.get("state", None)
-
-
-def is_playfab_id_format(arg: str):
-    return re.search(r"^([\S]{14,16})+$", arg) is not None
 
 
 def parse_match_input(raw: str) -> MatchInput | None:

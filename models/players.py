@@ -88,8 +88,10 @@ class RbbBounty:
     @property
     def points(self):
         return (
-            self.static_points
-            + sum(b.points for b in self.dynamic_bounties if b.claimable > 0)
+            (
+                self.static_points
+                + sum(b.points for b in self.dynamic_bounties if b.claimable > 0)
+            )
             if self.dynamic_bounties
             else self.static_points
         )
@@ -101,18 +103,21 @@ class RbbBounty:
     @property
     def claimable(self):
         return (
-            self.static_claimable + sum(b.claimable for b in self.dynamic_bounties)
+            (self.static_claimable + sum(b.claimable for b in self.dynamic_bounties))
             if self.dynamic_bounties
             else self.static_claimable
         )
 
-    def claim(self) -> int:
+    def claim(self, custom_takeout: DynamicBounty | None = None) -> int:
         points = self.points
         if self.dynamic_bounties and len(self.dynamic_bounties) > 0:
-            last_bounty = self.dynamic_bounties[-1]
-            last_bounty.claimable -= 1
-            if last_bounty.claimable == 0:
-                self.dynamic_bounties.pop()
+            removal_index = (
+                self.dynamic_bounties.index(custom_takeout) if custom_takeout else -1
+            )
+            target_bounty = self.dynamic_bounties[removal_index]
+            target_bounty.claimable -= 1
+            if target_bounty.claimable == 0:
+                self.dynamic_bounties.pop(removal_index)
         else:
             self.static_claimable -= 1
         return points
@@ -172,10 +177,46 @@ class RbbLeaderBoardCfg(IOBoundDataclass):
             )
         return player
 
-    def add_most_kills_bounty(self, player: RbbPlayer, place: int):
+    def add_revenge_bounty(
+        self, caller: str, target: str, points: int
+    ) -> tuple[int, int]:
+        """
+        Add a revenge bounty for the caller against the target.
+        Dynamic bounty key: revenge($caller)
+        If caller already has a revenge bounty against target, will not add another.
+        Bounty points is custom, 1 claim.
+        """
+        bounty_source = f"revenge({caller})"
+        bounty = self.bounties.get(target, None)
+        if not bounty:
+            logger.info(
+                f"{target} has no bounty, adding new revenge bounty for {caller}: {points} points, 1 claim."
+            )
+            new_bounty = RbbBounty(0, 0)
+            new_bounty.add_dynamic_bounty(points, 1, bounty_source)
+            self.bounties[target] = new_bounty
+            return (points, 1)
+        existing_revenge_bounty = next(
+            (b for b in bounty.dynamic_bounties if b.source == bounty_source), None
+        )
+        if existing_revenge_bounty:
+            logger.info(
+                f"{target} already has a revenge bounty from {caller}, not adding another."
+            )
+            return (0, 0)
+        else:
+            logger.info(
+                f"Adding new revenge bounty for {caller} against {target}: {points} points, 1 claim."
+            )
+            bounty.add_dynamic_bounty(points, 1, bounty_source)
+            return (points, 1)
+
+    def add_most_kills_bounty(
+        self, player: RbbPlayer, place: int
+    ) -> tuple[int, int] | None:
         placement_points = MATCH_MOST_KILLS_PTS.get(place, 0)
         if placement_points == 0:
-            return
+            return None
         logger.debug(
             f"Adding most kills bounty for {player.name}: {placement_points} points"
         )
@@ -188,7 +229,7 @@ class RbbLeaderBoardCfg(IOBoundDataclass):
             new_bounty = RbbBounty(0, 0)
             new_bounty.add_dynamic_bounty(placement_points, 1, bounty_source)
             self.bounties[player.playfab_id] = new_bounty
-            return
+            return (placement_points, 1)
         existing_most_kills_bounty = next(
             (b for b in bounty.dynamic_bounties if b.source == bounty_source), None
         )
@@ -199,6 +240,7 @@ class RbbLeaderBoardCfg(IOBoundDataclass):
                 )
                 existing_most_kills_bounty.points = placement_points
                 existing_most_kills_bounty.claimable = 1
+                return (placement_points, 1)
             elif existing_most_kills_bounty.points >= placement_points:
                 next_bounty = next(
                     (
@@ -213,19 +255,24 @@ class RbbLeaderBoardCfg(IOBoundDataclass):
                 )
                 existing_most_kills_bounty.points = next_bounty
                 existing_most_kills_bounty.claimable = 1
+                return (next_bounty, 1)
             else:
                 logger.debug(
                     f"{player.name} already has a most kills bounty of {existing_most_kills_bounty.points} points, which is higher than {placement_points}, not bumping."
                 )
+                return None
         else:
             bounty.add_dynamic_bounty(placement_points, 1, bounty_source)
+            return (placement_points, 1)
 
     def is_elligible_for_ks_bounty(self, kill_streak: int):
         return kill_streak in KS_BOUNTIES or kill_streak > MAX_KS_BOUNTY_KILLS
 
-    def add_ks_bounty(self, player: RbbPlayer, kill_streak: int):
+    def add_ks_bounty(
+        self, player: RbbPlayer, kill_streak: int
+    ) -> tuple[int, int] | None:
         if not self.is_elligible_for_ks_bounty(kill_streak):
-            return
+            return None
         bounty_source = "match kills"
         points = KS_BOUNTIES.get(
             kill_streak, MAX_KS_BOUNTY_KILLS + (kill_streak - MAX_KS_BOUNTY_KILLS) * 10
@@ -239,7 +286,7 @@ class RbbLeaderBoardCfg(IOBoundDataclass):
             new_bounty = RbbBounty(0, 0)
             new_bounty.add_dynamic_bounty(points, 1, bounty_source)
             self.bounties[player.playfab_id] = new_bounty
-            return
+            return (points, 1)
         existing_ks_bounty = next(
             (b for b in bounty.dynamic_bounties if b.source == bounty_source), None
         )
@@ -250,6 +297,7 @@ class RbbLeaderBoardCfg(IOBoundDataclass):
                 )
                 existing_ks_bounty.points = points
                 existing_ks_bounty.claimable = 1
+                return (points, 1)
             elif existing_ks_bounty.points == points:
                 next_bounty = next(
                     (b for b in KS_BOUNTIES.values() if b > existing_ks_bounty.points),
@@ -260,15 +308,76 @@ class RbbLeaderBoardCfg(IOBoundDataclass):
                 )
                 existing_ks_bounty.points = next_bounty
                 existing_ks_bounty.claimable = 1
+                return (next_bounty, 1)
             else:
                 logger.debug(
                     f"{player.name} already has a KS bounty of {existing_ks_bounty.points} points, which is higher than {points}, not bumping."
                 )
+            return None
         else:
             logger.debug(
                 f"Adding new KS bounty for {player.name}: {points} points, 1 claim."
             )
             bounty.add_dynamic_bounty(points, 1, bounty_source)
+            return (points, 1)
+
+    def add_placement_bounty(
+        self, player: RbbPlayer, place: int
+    ) -> tuple[int, int] | None:
+        """
+        Add placement bounty to player based on their place in the match.
+        If player already has a bounty, will be updated if new one is greater, otherwise ignored.
+        Dynamic bounty key: matchPlacement
+        Placement bounties:
+        1st place = +20 point bounty
+        2nd place = +15 point bounty
+        3rd place = +10 point bounty
+        4th place = +5 point bounty
+        """
+        placement_points_map = {1: 20, 2: 15, 3: 10, 4: 5}
+        points = placement_points_map.get(place, 0)
+        if points == 0:
+            return None
+        bounty_source = "matchPlacement"
+        bounty = self.bounties.get(player.playfab_id, None)
+        if not bounty:
+            logger.info(
+                f"{player.name} has no placement bounty, adding new one, with {points} points, 1 claim."
+            )
+            new_bounty = RbbBounty(0, 0)
+            new_bounty.add_dynamic_bounty(points, 1, bounty_source)
+            self.bounties[player.playfab_id] = new_bounty
+            return (points, 1)
+        existing_placement_bounty = next(
+            (b for b in bounty.dynamic_bounties if b.source == bounty_source), None
+        )
+        if existing_placement_bounty:
+            if existing_placement_bounty.points < points:
+                logger.info(
+                    f"Updating existing placement bounty for {player.name} to {points} points."
+                )
+                existing_placement_bounty.points = points
+                existing_placement_bounty.claimable = 1
+                return (points, 1)
+            elif existing_placement_bounty.points == points:
+                next_bounty = max(points, round(points * 1.25))
+                logger.info(
+                    f"{player.name} already has a placement bounty of {existing_placement_bounty.points} points, bumping to {next_bounty} points."
+                )
+                existing_placement_bounty.points = next_bounty
+                existing_placement_bounty.claimable = 1
+                return (next_bounty, 1)
+            else:
+                logger.info(
+                    f"{player.name} already has a placement bounty of {existing_placement_bounty.points} points, which is higher than {points}, not bumping."
+                )
+                return None
+        else:
+            logger.info(
+                f"Adding new placement bounty for {player.name}: {points} points, 1 claim."
+            )
+            bounty.add_dynamic_bounty(points, 1, bounty_source)
+            return (points, 1)
 
     def as_dict(self):
         self_dict = self.__dict__.copy()
@@ -281,15 +390,30 @@ class RbbLeaderBoardCfg(IOBoundDataclass):
             bounty.tick_bounties()
         self.bounties = {k: v for k, v in self.bounties.items() if not v.exhausted}
 
-    def claim_bounty(self, player: RbbPlayer, bounty_id: str) -> int:
+    def claim_bounty(self, player: RbbPlayer, bounty_id: str) -> tuple[int, bool]:
         bounty = self.bounties.get(bounty_id, None)
         if not bounty or bounty.exhausted:
-            return 0
-        points = bounty.claim()
+            return 0, False
+        rvg_bounty = next(
+            (
+                b
+                for b in bounty.dynamic_bounties
+                if b.source == f"revenge({player.playfab_id})"
+            ),
+            None,
+        )
+        points = bounty.claim(rvg_bounty)
+        if rvg_bounty:
+            points += round(points * 0.5)
         player.claim_bounty(bounty_id, points)
+        if rvg_bounty:
+            # remove all other revenge bounties for balance reasons
+            bounty.dynamic_bounties = list(
+                b for b in bounty.dynamic_bounties if not b.source.startswith("revenge")
+            )
         if bounty.exhausted:
             self.bounties.pop(bounty_id)
-        return points
+        return points, bool(rvg_bounty)
 
     def auto_top_10_bounties(self):
         current_time = time.time()
