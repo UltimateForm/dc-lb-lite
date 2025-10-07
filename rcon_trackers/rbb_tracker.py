@@ -364,9 +364,6 @@ class RbbTracker(Cog):
 
     async def handle_chat_event(self, message: ChatEvent):
         normal_msg = message.message.strip().lower()
-        logger.info(
-            f"CHAT: {message.user_name} ({message.player_id}): {message.message}"
-        )
         if message.player_id not in self._player_name_map:
             self._player_name_map[message.player_id] = message.user_name
             logger.debug(
@@ -378,6 +375,9 @@ class RbbTracker(Cog):
             and message.message.startswith(".rvg")
             and message.player_id in self.pending_revenge
         ):
+            logger.info(
+                f"RVG CHAT: {message.user_name} ({message.player_id}): {message.message}"
+            )
             message_comps = message.message.split(" ")
             points = 15
             player = self._current_cfg.get_player(message.player_id)
