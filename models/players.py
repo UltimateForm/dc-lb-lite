@@ -268,6 +268,56 @@ class RbbLeaderBoardCfg(IOBoundDataclass):
     def is_elligible_for_ks_bounty(self, kill_streak: int):
         return kill_streak in KS_BOUNTIES or kill_streak > MAX_KS_BOUNTY_KILLS
 
+    def add_ws_bounty(
+        self, player: RbbPlayer, win_streak: int
+    ) -> tuple[int, int] | None:
+        """
+        Adds winstreak bounty
+        Starts at 20, doubles for each consecutive win
+        2 consecutive wins: 20
+        3 consecutive wins: 40
+        4 consecutive wins: 80
+        5 consecutive wins: 160
+        etc
+        Always 1 claim
+        If player already has a winstreak bounty, replace only if new bounty is higher
+        """
+        if win_streak < 2:
+            return None
+        points = 20 * (2 ** (win_streak - 2))
+        bounty_source = "winstreak"
+        bounty = self.bounties.get(player.playfab_id, None)
+        if not bounty:
+            logger.info(
+                f"{player.name} has no bounty at all, adding new one, with {points} points, 1 claim."
+            )
+            new_bounty = RbbBounty(0, 0)
+            new_bounty.add_dynamic_bounty(points, 1, bounty_source)
+            self.bounties[player.playfab_id] = new_bounty
+            return (points, 1)
+        existing_ws_bounty = next(
+            (b for b in bounty.dynamic_bounties if b.source == bounty_source), None
+        )
+        if existing_ws_bounty:
+            if existing_ws_bounty.points < points:
+                logger.info(
+                    f"Updating existing winstreak bounty for {player.name} to {points} points."
+                )
+                existing_ws_bounty.points = points
+                existing_ws_bounty.claimable = 1
+                return (points, 1)
+            else:
+                logger.info(
+                    f"{player.name} already has a winstreak bounty of {existing_ws_bounty.points} points, which is higher than or equal to {points}, not bumping."
+                )
+                return None
+        else:
+            logger.info(
+                f"Adding new winstreak bounty for {player.name}: {points} points, 1 claim."
+            )
+            bounty.add_dynamic_bounty(points, 1, bounty_source)
+            return (points, 1)
+
     def add_ks_bounty(
         self, player: RbbPlayer, kill_streak: int
     ) -> tuple[int, int] | None:

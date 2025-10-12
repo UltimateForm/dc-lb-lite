@@ -357,7 +357,12 @@ class RbbTracker(Cog):
         self.backtask(
             asyncio.create_task(
                 self.say_rcon(
-                    "rvg usage: .rvg {x1/x2/x3/x4/x5}\n-x1 is default, rvg bounty of 15, x2 is 30, x3 is 45, and so on\nrvg bounty above 15 is 200% deducted from own score"
+                    (
+                        "rvg places a bounty on the player who last killed you in rbb\n"
+                        "usage: .rvg {x1/x2/x3/x4/x5}\n"
+                        "-x1 is default, rvg bounty of 15, x2 is 30, x3 is 45, and so on\n"
+                        "rvg bounty above 15 is 200% deducted from own score"
+                    )
                 )
             )
         )
@@ -370,17 +375,35 @@ class RbbTracker(Cog):
                 f"Adding {message.user_name} ({message.player_id}) to player name map"
             )
 
-        if (
-            not self._match_running
-            and message.message.startswith(".rvg")
-            and message.player_id in self.pending_revenge
-        ):
-            logger.info(
-                f"RVG CHAT: {message.user_name} ({message.player_id}): {message.message}"
-            )
+        if normal_msg.startswith(".rvg"):
+
+            if normal_msg == ".rvg help":
+                self.send_rvg_help()
+                return
+
+            if self._match_running:
+                self.backtask(
+                    asyncio.create_task(
+                        self.say_rcon(
+                            "Cannot place revenge bounty while a match is happening"
+                        )
+                    )
+                )
+                return
+            target_id = self.pending_revenge.pop(message.player_id, None)
+            if not target_id:
+                self.backtask(
+                    asyncio.create_task(
+                        self.say_rcon(
+                            f"There is no available revenge bounty target for {message.user_name}"
+                        )
+                    )
+                )
+                return
             message_comps = message.message.split(" ")
             points = 15
             player = self._current_cfg.get_player(message.player_id)
+
             if not player:
                 self.backtask(
                     asyncio.create_task(
@@ -407,17 +430,13 @@ class RbbTracker(Cog):
 
                 points = points * extra_points_multiplier
 
-            target_id = self.pending_revenge.pop(message.player_id)
-
             logger.info(f"Handling revenge for {message.player_id} against {target_id}")
             caller_name = message.user_name or self.get_name(target_id)
             target_name = self.get_name(target_id)
             set_points, claims = self._current_cfg.add_revenge_bounty(
                 message.player_id, target_id, points
             )
-            bounty_msg = (
-                f"{caller_name} HAS PLACED {set_points}PTS REVENGE BOUNTY ON {target_name}!"
-            )
+            bounty_msg = f"{caller_name} HAS PLACED {set_points}PTS REVENGE BOUNTY ON {target_name}!"
             if points > 15:
                 deducted = points * 2
                 player.score -= deducted
@@ -738,7 +757,7 @@ class RbbTracker(Cog):
             await self._channel.send(chunk)
 
         bounty_report = dict()
-        bounty_report_heading = ["Id", "Name", "KS", "MostKills", "Place"]
+        bounty_report_heading = ["Id", "Name", "KS", "WS", "MostKills", "Place"]
 
         bounty_subheading = f"### {debug_sig}Post-match bounty attribution"
 
@@ -748,6 +767,7 @@ class RbbTracker(Cog):
                     "id": id,
                     "name": self.get_name(id),
                     "ks": "-",
+                    "ws": "-",
                     "most_kills": "-",
                     "place": "-",
                 }
@@ -789,7 +809,15 @@ class RbbTracker(Cog):
                             found_player.playfab_id, "most_kills", added_ms_b_str
                         )
                 if player.place <= 4:
-
+                    if player.place == 1 and self._current_cfg.win_streak > 1:
+                        ws_bounty = self._current_cfg.add_ws_bounty(
+                            found_player, self._current_cfg.win_streak
+                        )
+                        if ws_bounty:
+                            ws_b_str = f"{ws_bounty[0]} pts x {ws_bounty[1]}"
+                            update_bounty_report_field(
+                                found_player.playfab_id, "ws", ws_b_str
+                            )
                     added_place_b = self._current_cfg.add_placement_bounty(
                         found_player, player.place
                     )
@@ -816,6 +844,7 @@ class RbbTracker(Cog):
                         b["id"],
                         b["name"],
                         b["ks"],
+                        b["ws"],
                         b["most_kills"],
                         b["place"],
                     ]
